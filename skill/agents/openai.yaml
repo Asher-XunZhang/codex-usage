@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex Token 统计"
+  short_description: "统计每轮和任务累计的输入、输出、缓存及子代理用量，注明快照边界"
+  default_prompt: "使用 $codex-token-usage 统计当前轮次与任务累计输入、输出 token，并说明缓存和子代理口径。"
+policy:
+  allow_implicit_invocation: true

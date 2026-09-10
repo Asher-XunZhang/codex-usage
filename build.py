@@ -84,7 +84,7 @@ def main():
     info = {
         'CFBundleName': 'Codex 用量', 'CFBundleDisplayName': 'Codex 用量',
         'CFBundleExecutable': 'CodexUsage', 'CFBundleIdentifier': 'local.codex-usage.desktop',
-        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.6.0', 'CFBundleVersion': '160',
+        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.0', 'CFBundleVersion': '100',
         'CFBundleIconFile': 'AppIcon', 'LSMinimumSystemVersion': '11.0', 'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication', 'NSHumanReadableCopyright': 'Independent local usage tool. Not affiliated with OpenAI.',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},

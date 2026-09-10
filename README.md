@@ -12,8 +12,8 @@ A native macOS companion for recorded Codex tokens and account quota. Local stat
 
 | Mac 芯片 | 下载文件 |
 | --- | --- |
-| Apple Silicon：M 系列 | [codex-usage-desktop-v1.6.0-AppleSilicon.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.6.0/codex-usage-desktop-v1.6.0-AppleSilicon.zip) |
-| Intel | [codex-usage-desktop-v1.6.0-Intel.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.6.0/codex-usage-desktop-v1.6.0-Intel.zip) |
+| Apple Silicon：M 系列 | [codex-usage-desktop-v1.0.0-AppleSilicon.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-AppleSilicon.zip) |
+| Intel | [codex-usage-desktop-v1.0.0-Intel.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-Intel.zip) |
 
 1. 在「 → 关于本机」确认芯片，下载匹配的 ZIP。GitHub 自动生成的 **Source code** 包用于开发，不能直接当作应用打开。
 2. 完整解压，把 `Codex用量.app` 拖到「应用程序」，然后双击。无需另装 Python、Node.js、Homebrew 或开发工具；首次启动会校验并离线解压随包组件。

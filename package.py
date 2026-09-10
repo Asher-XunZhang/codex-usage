@@ -12,7 +12,7 @@ import zipfile
 from scripts.fetch_runtime import digest_file
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '1.6.0'
+VERSION = '1.0.0'
 RELEASES = [('AppleSilicon', 'arm64'), ('Intel', 'x86_64')]
 DOCUMENTS = ['README.md', 'LICENSE', 'THIRD-PARTY.md', 'CHANGELOG.md']
 PRIVATE_SUFFIXES = ('.jsonl', '.sqlite', '.sqlite3', '.db', '.csv', '.log', '.pyc', '.pyo')

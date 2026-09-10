@@ -88,7 +88,7 @@ parentWatch.schedule(deadline: .now() + 1, repeating: 1)
 parentWatch.setEventHandler { if getppid() != parent { completed = true; semaphore.signal() } }; parentWatch.resume()
 do {
     try child.run()
-    send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "codex_usage_readonly", "version": "1.6.0"], "capabilities": ["experimentalApi": true, "requestAttestation": false]]])
+    send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "codex_usage_readonly", "version": "1.0.0"], "capabilities": ["experimentalApi": true, "requestAttestation": false]]])
     _ = semaphore.wait(timeout: .now() + 18)
 } catch {}
 outputPipe.fileHandleForReading.readabilityHandler = nil

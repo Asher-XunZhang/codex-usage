@@ -1668,7 +1668,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func showSupport() { NSWorkspace.shared.open(backend.root) }
     @objc func about() {
-        alert("Codex 用量 1.6.0", "原生 macOS 用量面板\n本地 Token 统计与账号剩余额度。\n额度由 Codex 的只读接口提供，重置卡仅显示数量。\n可调自动刷新和桌面胶囊。\n按 ⌘Q 退出会停止本工具的采集进程。\n\n当前运行：\(nativeArchitecture) · macOS 11+\n独立工具，与 OpenAI 官方无隶属关系。")
+        alert("Codex 用量 1.0.0", "原生 macOS 用量面板\n本地 Token 统计与账号剩余额度。\n额度由 Codex 的只读接口提供，重置卡仅显示数量。\n可调自动刷新和桌面胶囊。\n按 ⌘Q 退出会停止本工具的采集进程。\n\n当前运行：\(nativeArchitecture) · macOS 11+\n独立工具，与 OpenAI 官方无隶属关系。")
     }
     @objc func showCoverage() {
         let meta = snapshot["meta"] as? Object ?? [:]

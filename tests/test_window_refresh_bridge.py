@@ -63,7 +63,8 @@ final class Fixture {
     func finishRefreshing() { pendingRefresh = nil; capsuleState.enabled = true; capsuleState.indicator = "refresh" }
     func fetchCompact(manual: Bool) { scans += 1 }
     func manualRefresh() { manuals += 1; pendingRefresh = 5 }
-    func applyInterval(_ seconds: Int, refreshAfterChange: Bool) {}
+    func applyInterval(_ seconds: Int, refreshAfterChange: Bool, rememberedSeconds: Int? = nil, changeID: String? = nil) {}
+    func receiveIntervalRollback(_ payload: Object) {}
     func poll() { polls += 1 }
     func alert(_ title: String, _ message: String) { alerts += 1 }
     func hideDashboard() {}; func showDashboard() {}; func handleMainRequest() {}

@@ -11,37 +11,44 @@ enum CapsuleTheme: String, CaseIterable {
 /// Only display values live here: no hidden controls, layout tree or history rows.
 final class CapsuleState {
     var changed: (() -> Void)?
-    var quotaCompact = "额度 —" { didSet { changed?() } }
-    var quotaDetail = "正在读取账号额度…" { didSet { changed?() } }
-    var quotaFraction: Double? { didSet { changed?() } }
-    var quotaName = "剩余额度" { didSet { changed?() } }
-    var quotaStale = false { didSet { changed?() } }
-    var theme: CapsuleTheme = .dark { didSet { changed?() } }
+    // Refreshes commonly repeat display values; only actual changes invalidate UI.
+    var quotaCompact = "额度 —" { didSet { if quotaCompact != oldValue { changed?() } } }
+    var quotaDetail = "正在读取账号额度…" { didSet { if quotaDetail != oldValue { changed?() } } }
+    var quotaFraction: Double? {
+        didSet {
+            if quotaFraction != oldValue, !(quotaFraction?.isNaN == true && oldValue?.isNaN == true) { changed?() }
+        }
+    }
+    var quotaName = "剩余额度" { didSet { if quotaName != oldValue { changed?() } } }
+    var quotaStale = false { didSet { if quotaStale != oldValue { changed?() } } }
+    var theme: CapsuleTheme = .dark { didSet { if theme != oldValue { changed?() } } }
     var normalizedQuota: CGFloat? {
         guard let value = quotaFraction, value.isFinite else { return nil }
         return CGFloat(min(1, max(0, value)))
     }
-    var total = "—" { didSet { changed?() } }
-    var exact = "等待本机统计" { didSet { changed?() } }
-    var context = "今天 · 全部模型 / 任务" { didSet { changed?() } }
-    var input = "—" { didSet { changed?() } }
-    var output = "—" { didSet { changed?() } }
-    var cache = "缓存输入 —" { didSet { changed?() } }
-    var status = "正在连接…" { didSet { changed?() } }
-    var scope = 0 { didSet { changed?() } }
-    var rangeDays = "1" { didSet { changed?() } }
+    var total = "—" { didSet { if total != oldValue { changed?() } } }
+    var exact = "等待本机统计" { didSet { if exact != oldValue { changed?() } } }
+    var context = "今天 · 全部模型 / 任务" { didSet { if context != oldValue { changed?() } } }
+    var input = "—" { didSet { if input != oldValue { changed?() } } }
+    var output = "—" { didSet { if output != oldValue { changed?() } } }
+    var cache = "缓存输入 —" { didSet { if cache != oldValue { changed?() } } }
+    var status = "正在连接…" { didSet { if status != oldValue { changed?() } } }
+    var scope = 0 { didSet { if scope != oldValue { changed?() } } }
+    var rangeDays = "1" { didSet { if rangeDays != oldValue { changed?() } } }
     var scopeTitle: String { scope == 0 || rangeDays == "1" ? "今日" : (rangeDays == "all" ? "全部" : "\(rangeDays)天") }
-    var pinned = true { didSet { changed?() } }
-    var enabled = true { didSet { changed?() } }
-    var indicator = "refresh" { didSet { changed?() } }
-    var refreshSeconds = 5 { didSet { changed?() } }
+    var pinned = true { didSet { if pinned != oldValue { changed?() } } }
+    var enabled = true { didSet { if enabled != oldValue { changed?() } } }
+    var indicator = "refresh" { didSet { if indicator != oldValue { changed?() } } }
+    var refreshSeconds = 5 { didSet { if refreshSeconds != oldValue { changed?() } } }
+    var lastPositiveRefreshSeconds = 5
+    var dialogPresented = false
     var menuPresented = false
     var pointerPressed = false
     var keepsExpanded = false
-    var interactionActive: Bool { pointerPressed || menuPresented }
-    var selectedModel = "all" { didSet { changed?() } }
-    var selectedTask = "all" { didSet { changed?() } }
-    var selectedTaskLabel = "" { didSet { changed?() } }
+    var interactionActive: Bool { pointerPressed || menuPresented || dialogPresented }
+    var selectedModel = "all" { didSet { if selectedModel != oldValue { changed?() } } }
+    var selectedTask = "all" { didSet { if selectedTask != oldValue { changed?() } } }
+    var selectedTaskLabel = "" { didSet { if selectedTaskLabel != oldValue { changed?() } } }
     var modelTitle: String { selectedModel == "all" ? "全部模型" : selectedModel }
     var taskTitle: String { selectedTask == "all" ? "全部任务" : (selectedTaskLabel.isEmpty ? selectedTask : selectedTaskLabel) }
     var loadChoices: ((String, @escaping ([(String, String)]?, String?) -> Void) -> Void)?
@@ -325,7 +332,8 @@ final class CapsuleSurface: NSView {
     }
     private func presentContextMenu(at point: NSPoint) {
         guard let generation = beginMenu() else { return }
-        trackMenu([("main", "打开主面板"), ("refresh", "立即刷新"), ("", ""),
+        trackMenu([("main", "打开主面板"), ("refresh", "立即刷新"),
+                   ("toggleRefresh", state.refreshSeconds > 0 ? "暂停自动刷新" : "恢复自动刷新（每 \(state.lastPositiveRefreshSeconds) 秒）"), ("", ""),
                    ("details", state.keepsExpanded ? "解除保持展开" : "保持展开"),
                 ("pin", state.pinned ? "取消置顶" : "置顶浮窗"),
                    ("themeDark", "深色主题"), ("themeLight", "浅色主题"), ("", ""),

@@ -158,8 +158,10 @@ def make_handler(index, instance_id=None):
                     data = {"ticket": ticket, "completed": completed, "refresh_error": index.refresh_error,
                             "generated_at": index.updated}
                 elif path == "/api/settings":
-                    index.configure_refresh(body.get("refresh_seconds"))
-                    data = {"refresh_seconds": index.refresh_seconds}
+                    if "refresh_revision" in body:
+                        data = index.configure_refresh(body.get("refresh_seconds"), body["refresh_revision"])
+                    else:
+                        data = index.configure_refresh(body.get("refresh_seconds"))
                 else:
                     self.send(404, b"Not found", "text/plain")
                     return

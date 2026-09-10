@@ -151,6 +151,8 @@ final class MainFixture: NSObject, Driver {
     let floatingChoices = FixtureRequest()
     func sendHost(_ action: String) { fatalError("The host must not forward its own window actions") }
     func publishHostState() {}
+    var intervalPrompt: FixtureRequest?
+    func trimIdleMemory() {}
     override init() {
         super.init(); capsule = CapsuleSurface(capsuleState)
         capsule?.containsPoint = { [weak self] in self?.floating?.frame.contains($0) ?? false }
@@ -230,12 +232,18 @@ for driver: Driver in [MainFixture()] {
         check(!driver.testState.keepsExpanded && driver.testAnimation != nil && !driver.testTarget, "Removing manual hold outside collapses immediately")
     case "hide-cancel":
         driver.expand(true); driver.testAnimation!.advance(0.45)
+        let oldSurface = driver.testSurface, oldWindow = driver.testWindow
         driver.testState.pointerPressed = true; driver.testState.menuPresented = true; driver.testState.keepsExpanded = true
         driver.interaction(true); let count = CapsuleAnimation.created
         driver.hideForTest()
-        check(driver.testSurface.cancelCount == 1 && !driver.testState.interactionActive && !driver.testState.keepsExpanded, "Hide must cancel the Surface gesture/menu and clear manual hold")
-        check(driver.testSurface.expansion == 0 && driver.testAnimation == nil && NSEvent.monitors.isEmpty && !driver.testWindow.isVisible, "Hide leaves no partial geometry, animations, or monitors")
+        check(oldSurface.cancelCount == 1 && !driver.testState.interactionActive && !driver.testState.keepsExpanded, "Hide must cancel the Surface gesture/menu and clear manual hold")
+        check(oldSurface.expansion == 0 && driver.testAnimation == nil && NSEvent.monitors.isEmpty && !oldWindow.isVisible, "Hide leaves no partial geometry, animations, or monitors")
         check(CapsuleAnimation.created == count, "The cancellation callback must not start a new animation while hiding")
+    case "hide-releases":
+        weak var oldSurface = driver.testSurface
+        weak var oldWindow = driver.testWindow
+        driver.hideForTest()
+        check(oldSurface == nil && oldWindow == nil, "Explicit hiding must release the window and surface, not just order them out")
     case "partial-monitor":
         NSEvent.globalUnavailable = true
         driver.expand(true); driver.testAnimation!.advance(1)
@@ -279,6 +287,9 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_hide_cancels_gesture_menu_and_monitors(self):
         self.run_case('hide-cancel')
+
+    def test_hide_releases_window_and_surface(self):
+        self.run_case('hide-releases')
 
 
     def test_missing_global_monitor_does_not_leak_local_monitors(self):

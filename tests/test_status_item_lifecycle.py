@@ -88,7 +88,7 @@ final class NSWindow: NSObject {
 final class FakeButton { var title = "" }
 final class FakeRequest { var cancelled = false; func cancel() { cancelled = true } }
 final class FakeSession { func invalidateAndCancel() {} }
-final class FakeAnimation { func stop() {} }
+final class FakeAnimation { var step: ((CGFloat) -> Void)?; func stop() {} }
 final class FakeWorker {
     let snapshot = (capsuleCompact: "周余 42%", detail: "合成额度")
     var stopCount = 0, url: URL? = URL(string: "http://127.0.0.1:1234")
@@ -129,6 +129,9 @@ final class Fixture: NSObject {
     func stopCompactMonitoring() {}
     func fetchCompact(manual: Bool) { collections += 1 }
     func publishHostState() { publications += 1 }
+    func saveCapsuleOrigin() {}
+    var intervalPrompt: FakeRequest?
+    func trimIdleMemory() {}
     func releaseDetailData() {}
     func loadCompact() {}
     func loadUsage() {}
@@ -178,7 +181,7 @@ case "independent-windows":
         stable(host, item)
         host.mainWindowOpen = true; host.closeFloating()
         check(host.windowProcesses.closes == 1 && host.mainWindowOpen, "Float close does not close Main")
-        check(!preferences.bool(forKey: "floatingVisible") && host.floating?.isVisible == false, "Float close persists only its visibility")
+        check(!preferences.bool(forKey: "floatingVisible") && host.floating == nil && host.capsule == nil && !panel.isVisible, "Float close disposes hidden resources without closing Main")
         stable(host, item)
     }
 case "open-main":

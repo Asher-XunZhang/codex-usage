@@ -13,6 +13,7 @@ import time
 from token_usage import FIELDS, CORE, usage, valid_id, metadata, subtract, add
 
 TZ = timezone(timedelta(hours=8))
+_UNVERSIONED_REFRESH = object()
 
 
 def timestamp(value):
@@ -198,6 +199,7 @@ class UsageIndex:
         self.scanning = False
         self.refresh_condition = threading.Condition()
         self.refresh_seconds = refresh_seconds
+        self.refresh_revision = -1
         self.refresh_requested = 0
         self.refresh_completed = 0
         self.refresh_error = None
@@ -211,12 +213,26 @@ class UsageIndex:
             self.refresh_condition.notify_all()
             return self.refresh_requested
 
-    def configure_refresh(self, seconds):
+    def configure_refresh(self, seconds, revision=_UNVERSIONED_REFRESH):
         if type(seconds) is not int or not 0 <= seconds <= 3600:
             raise ValueError("Refresh interval must be an integer from 0 to 3600")
+        versioned = revision is not _UNVERSIONED_REFRESH
+        if versioned and (type(revision) is not int or revision < 0):
+            raise ValueError("Refresh revision must be a non-negative integer")
         with self.refresh_condition:
+            # A cancelled HTTP request can still reach this worker. Compare and
+            # update under the same lock as the interval, including the reply.
+            if versioned and revision <= self.refresh_revision:
+                return {"refresh_seconds": self.refresh_seconds,
+                        "refresh_revision": self.refresh_revision, "applied": False}
             self.refresh_seconds = seconds
+            if versioned:
+                self.refresh_revision = revision
             self.refresh_condition.notify_all()
+            data = {"refresh_seconds": self.refresh_seconds}
+            if versioned:
+                data.update(refresh_revision=self.refresh_revision, applied=True)
+            return data
 
     def wait_for_refresh(self, ticket, timeout):
         with self.refresh_condition:

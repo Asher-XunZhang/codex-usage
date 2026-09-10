@@ -42,15 +42,20 @@ final class FloatingChoicesReader {
                 guard let self = self, self.generation == ticket else { return }
                 self.process = nil; self.output = nil; self.timeout?.cancel(); self.timeout = nil
                 let callback = self.pending; self.pending = nil
-                guard finished.terminationStatus == 0,
-                      let size = (try? FileManager.default.attributesOfItem(atPath: path.path)[.size]) as? NSNumber, size.intValue <= 8 * 1024 * 1024,
-                      let bytes = try? Data(contentsOf: path), let json = try? JSONSerialization.jsonObject(with: bytes) as? Object,
-                      let rows = json["choices"] as? [Object] else { callback?(nil, "筛选项暂不可读，请稍后重试"); return }
-                let choices = rows.compactMap { row -> (String, String)? in
-                    guard let id = row["id"] as? String, let label = row["label"] as? String else { return nil }
-                    // Keep IDs in task titles so equal names remain distinguishable.
-                    return (id, kind == "task" && id != "all" ? "\(label) · \(id)" : label)
+                // Delivery can enter native menu tracking. Retire the JSON and
+                // file buffers before that nested run loop keeps this frame alive.
+                let choices: [(String, String)]? = autoreleasepool {
+                    guard finished.terminationStatus == 0,
+                          let size = (try? FileManager.default.attributesOfItem(atPath: path.path)[.size]) as? NSNumber, size.intValue <= 8 * 1024 * 1024,
+                          let bytes = try? Data(contentsOf: path), let json = try? JSONSerialization.jsonObject(with: bytes) as? Object,
+                          let rows = json["choices"] as? [Object] else { return nil }
+                    return rows.compactMap { row -> (String, String)? in
+                        guard let id = row["id"] as? String, let label = row["label"] as? String else { return nil }
+                        // Keep IDs in task titles so equal names remain distinguishable.
+                        return (id, kind == "task" && id != "all" ? "\(label) · \(id)" : label)
+                    }
                 }
+                guard let choices = choices else { callback?(nil, "筛选项暂不可读，请稍后重试"); return }
                 callback?(choices, nil)
             }
         }

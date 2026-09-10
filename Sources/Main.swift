@@ -176,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var compactLastScan = Date.distantPast
     lazy var compactMonitor = UsageChangeMonitor { [weak self] in self?.markCompactDirty() }
     var trimWork: DispatchWorkItem?
+    var lastMemoryTrim = -Double.infinity
     var filteredSnapshot: Object = [:]
     var filteredSnapshotQuery: FloatingUsageQuery?
     private var activeSession: URLSession?
@@ -208,6 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let saved = usagePreferences.object(forKey: "refreshSeconds") as? Int ?? 5
         return (0...3600).contains(saved) ? saved : 5
     }() { didSet { capsuleState.refreshSeconds = autoSeconds } }
+    var lastPositiveRefreshSeconds = RefreshIntervalPreference.remembered(
+        preferences: usagePreferences, current: usagePreferences.integer(forKey: "refreshSeconds"))
+    var intervalPrompt: RefreshIntervalPrompt?
+    var intervalChangeID = UUID().uuidString
     var pendingRefresh: Int?
     var refreshStarted: Date?
     var manualBeganAt: Date?
@@ -275,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationDidFinishLaunching(_ notification: Notification) {
         capsuleState.theme = CapsuleTheme(storedValue: usagePreferences.string(forKey: "capsuleTheme"))
         capsuleState.refreshSeconds = autoSeconds
+        capsuleState.lastPositiveRefreshSeconds = lastPositiveRefreshSeconds
         capsuleState.scope = 1
         capsuleState.rangeDays = floatingDays
         capsuleState.selectedModel = floatingModel; capsuleState.selectedTask = floatingTask
@@ -357,6 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         windowProcesses.publishState([
             "floatingVisible": floating?.isVisible == true,
             "theme": capsuleState.theme.rawValue, "refreshSeconds": autoSeconds,
+            "lastPositiveRefreshSeconds": lastPositiveRefreshSeconds,
+            "intervalChangeID": intervalChangeID,
             "quotaDetail": quota.detail, "quotaResetLabel": quota.resetLabel
         ])
     }
@@ -369,7 +377,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         hostQuotaResetLabel = state["quotaResetLabel"] as? String ?? hostQuotaResetLabel
         dashboard?.quotaText.stringValue = hostQuotaDetail; dashboard?.quotaCards.stringValue = hostQuotaResetLabel
         if let value = state["theme"] as? String { applyCapsuleTheme(CapsuleTheme(storedValue: value)) }
-        if let seconds = state["refreshSeconds"] as? Int, seconds != autoSeconds { applyInterval(seconds, refreshAfterChange: false) }
+        let remembered = state["lastPositiveRefreshSeconds"] as? Int
+        let changeID = state["intervalChangeID"] as? String
+        if let seconds = state["refreshSeconds"] as? Int,
+           seconds != autoSeconds || (changeID != nil && changeID != intervalChangeID) {
+            applyInterval(seconds, refreshAfterChange: false, rememberedSeconds: remembered, changeID: changeID)
+        } else if let remembered = remembered, (1...3600).contains(remembered) {
+            rememberRefreshInterval(autoSeconds > 0 ? autoSeconds : remembered)
+            if let changeID = changeID { intervalChangeID = changeID }
+        }
         usagePreferences.synchronize(); handleMainRequest()
     }
     func receiveWindowAction(_ action: String, payload: Object) {
@@ -408,7 +424,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "theme":
             if let value = payload["value"] as? String { applyCapsuleTheme(CapsuleTheme(storedValue: value)) }
         case "interval":
-            if let seconds = payload["seconds"] as? Int { applyInterval(seconds, refreshAfterChange: false) }
+            if let seconds = payload["seconds"] as? Int {
+                applyInterval(seconds, refreshAfterChange: false, rememberedSeconds: payload["lastPositiveRefreshSeconds"] as? Int,
+                              changeID: payload["intervalChangeID"] as? String)
+            }
+        case "intervalRollback": receiveIntervalRollback(payload)
         case "refreshQuota": quotaReader.refresh(force: true)
         case "dataChanged":
             compactDirty = true; compactDirtyGeneration += 1; compactSelectionQueued = true
@@ -861,22 +881,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // window. Read the originating control, not a force-unwrapped current UI.
         guard let selected = (sender as? NSPopUpButton)?.selectedTag() ?? dashboard?.intervalPicker.selectedTag() else { return }
         guard selected == -1 else { applyInterval(selected); return }
-        guard let activeWindow = window, dashboard != nil else { return }
         rebuildIntervalPicker()
-        let prompt = NSAlert(); prompt.messageText = "设置自动刷新间隔"
-        prompt.informativeText = "输入 1–3600 秒。扫描完成后开始计算下一次间隔；手动刷新始终立即触发。"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 25))
-        field.stringValue = String(max(1, autoSeconds)); field.placeholderString = "秒"
-        field.setAccessibilityLabel("自定义刷新秒数")
-        prompt.accessoryView = field; prompt.addButton(withTitle: "应用"); prompt.addButton(withTitle: "取消")
-        prompt.beginSheetModal(for: activeWindow) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self = self else { return }
-            guard let seconds = Int(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)), (1...3600).contains(seconds) else {
-                self.alert("间隔无效", "请输入 1 到 3600 之间的整数秒数。"); return
-            }
-            self.applyInterval(seconds)
-        }
-        activeWindow.attachedSheet?.makeFirstResponder(field)
+        statusCustomInterval()
     }
     func post(_ path: String, body: Object, completion: @escaping (Result<Object, Error>) -> Void) -> URLSessionDataTask? {
         guard let base = backend.url else { return nil }
@@ -898,12 +904,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         command.resume(); return command
     }
-    func applyInterval(_ seconds: Int, refreshAfterChange: Bool = true) {
+    func rememberRefreshInterval(_ seconds: Int) {
+        guard (1...3600).contains(seconds) else { return }
+        lastPositiveRefreshSeconds = seconds
+        capsuleState.lastPositiveRefreshSeconds = seconds
+        usagePreferences.set(seconds, forKey: RefreshIntervalPreference.lastPositiveKey)
+    }
+    @objc func toggleAutoRefresh() {
+        applyInterval(autoSeconds > 0 ? 0 : lastPositiveRefreshSeconds)
+    }
+    func receiveIntervalRollback(_ payload: Object) {
+        guard !isMainWindowProcess else { return }
+        if let expected = payload["expectedChangeID"] as? String, expected == intervalChangeID,
+           let seconds = payload["seconds"] as? Int, (0...3600).contains(seconds) {
+            applyInterval(seconds, refreshAfterChange: false, rememberedSeconds: payload["lastPositiveRefreshSeconds"] as? Int)
+        } else {
+            // A late failure must not overwrite a newer choice, even if its
+            // value happens to match again. Restore authoritative preferences.
+            usagePreferences.set(autoSeconds, forKey: "refreshSeconds")
+            rememberRefreshInterval(lastPositiveRefreshSeconds)
+            publishHostState()
+        }
+    }
+    func applyInterval(_ seconds: Int, refreshAfterChange: Bool = true, rememberedSeconds: Int? = nil, changeID: String? = nil) {
         guard (0...3600).contains(seconds) else { return }
-        let previous = autoSeconds
+        let previous = autoSeconds, previousRemembered = lastPositiveRefreshSeconds
+        intervalChangeID = changeID ?? UUID().uuidString
+        let change = intervalChangeID
+        rememberRefreshInterval(seconds > 0 ? seconds : (rememberedSeconds ?? lastPositiveRefreshSeconds))
         autoSeconds = seconds; usagePreferences.set(seconds, forKey: "refreshSeconds"); rebuildIntervalPicker()
         if isMainWindowProcess {
-            if !applyingHostState { sendHost("interval", payload: ["seconds": seconds]) }
+            if !applyingHostState { sendHost("interval", payload: ["seconds": seconds, "lastPositiveRefreshSeconds": lastPositiveRefreshSeconds, "intervalChangeID": change]) }
         } else { publishHostState() }
         settingsID += 1; let id = settingsID
         settingsCommand?.cancel()
@@ -914,8 +945,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return
         }
         guard backend.url != nil else { return }
-        settingsCommand = post("api/settings", body: ["refresh_seconds": seconds]) { [weak self] result in
-            guard let self = self, self.settingsID == id else { return }
+        settingsCommand = post("api/settings", body: ["refresh_seconds": seconds, "refresh_revision": id]) { [weak self] result in
+            guard let self = self, self.settingsID == id, self.intervalChangeID == change else { return }
             self.settingsCommand = nil
             switch result {
             case .success:
@@ -924,8 +955,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.loadCompact()
                 if refreshAfterChange && seconds > 0 { self.manualRefresh() }
             case .failure:
+                self.rememberRefreshInterval(previousRemembered)
                 self.autoSeconds = previous; usagePreferences.set(previous, forKey: "refreshSeconds"); self.rebuildIntervalPicker()
-                self.sendHost("interval", payload: ["seconds": previous])
+                self.sendHost("intervalRollback", payload: ["seconds": previous, "lastPositiveRefreshSeconds": previousRemembered, "expectedChangeID": change])
+                // The failed response may have followed a successful write.
+                // A newer revision makes the rollback effective at the worker,
+                // while an even newer user choice will supersede it normally.
+                self.settingsID += 1
+                self.settingsCommand = self.post("api/settings", body: ["refresh_seconds": previous, "refresh_revision": self.settingsID]) { _ in }
                 self.statusText = "刷新间隔设置失败，请重试"
             }
         }
@@ -936,12 +973,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func hideFloating() {
         if isMainWindowProcess { sendHost("hideFloating"); return }
+        intervalPrompt?.cancel()
         resetFloatInteraction()
         floatingChoices.cancel()
         floatCollapse?.cancel(); floatCollapse = nil
         stopFloatMouseMonitoring()
         setFloatExpanded(false, animated: false)
+        saveCapsuleOrigin()
+        // Explicit hiding ends the window's lifetime. Keep only its display
+        // state so showing it again restores the same values and preferences.
         floating?.orderOut(nil)
+        floating?.delegate = nil; floating?.contentView = nil; floating?.close()
+        floating = nil; capsule = nil
+        floatAnimation?.step = nil; floatAnimation?.stop(); floatAnimation = nil; floatAnchor = nil
+        trimIdleMemory()
         usagePreferences.set(false, forKey: "floatingVisible")
         floatingButton?.title = "显示浮窗"
         floatingRequest?.cancel(); floatingRequest = nil; floatingRequestID += 1
@@ -1019,6 +1064,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 case "themeDark": self.applyCapsuleTheme(.dark)
                 case "themeLight": self.applyCapsuleTheme(.light)
                 case "interval:custom": self.statusCustomInterval()
+                case "toggleRefresh": self.toggleAutoRefresh()
                 default:
                     if action.hasPrefix("interval:"), let seconds = Int(action.dropFirst("interval:".count)) { self.applyInterval(seconds) }
                     else if action.hasPrefix("period:") { self.applyFloatingPeriod(String(action.dropFirst("period:".count))) }
@@ -1106,11 +1152,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func trimIdleMemory() {
         trimWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self = self, self.compactMode, !self.collector.busy else { return }
+            guard let self = self else { return }
+            self.trimWork = nil
+            guard self.compactMode, !self.terminating, !self.collector.busy, !self.nativeSummaryBusy,
+                  self.pendingRefresh == nil, !self.statusMenuTracking, !self.capsuleState.interactionActive,
+                  !self.floatExpanded, self.floatAnimation == nil, !self.floatMovingFrame else { return }
+            self.lastMemoryTrim = ProcessInfo.processInfo.systemUptime
             malloc_zone_pressure_relief(nil, 0)
         }
         trimWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        // Coalesce release events and leave interaction/animation uninterrupted.
+        // This asks malloc for free pages; it cannot discard live AppKit caches.
+        let delay = max(0.5, 2 - (ProcessInfo.processInfo.systemUptime - lastMemoryTrim))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
     @objc func closeFloating() { hideFloating() }
     func toggleCapsulePin() {
@@ -1148,8 +1202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard !terminating else { return }
         if isMainWindowProcess { sendHost("onlyStatusBar"); return }
         hideFloating()
-        floating?.delegate = nil; floating?.contentView = nil; floating?.close()
-        floating = nil; capsule = nil; floatAnimation?.stop(); floatAnimation = nil; floatAnchor = nil
         hideDashboard()
     }
     @objc func showDashboard() {
@@ -1391,16 +1443,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             row.tag = seconds; row.target = self; row.state = autoSeconds == seconds ? .on : .off; options.addItem(row)
         }
         let custom = NSMenuItem(title: "自定义…", action: #selector(statusCustomInterval), keyEquivalent: ""); custom.target = self; options.addItem(custom)
+        let toggle = NSMenuItem(title: autoSeconds > 0 ? "暂停自动刷新" : "恢复自动刷新（每 \(lastPositiveRefreshSeconds) 秒）", action: #selector(toggleAutoRefresh), keyEquivalent: "")
+        toggle.target = self; menu.addItem(toggle)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "退出 Codex 用量", action: #selector(quitApplication), keyEquivalent: "q")
         quit.target = self; menu.addItem(quit)
     }
     @objc func statusInterval(_ sender: NSMenuItem) { applyInterval(sender.tag) }
     @objc func statusCustomInterval() {
-        if !isMainWindowProcess { usagePreferences.set(true, forKey: "openCustomInterval"); openMainWindow(); return }
-        showDashboard()
-        guard dashboard != nil else { return }
-        intervalPicker.selectItem(withTag: -1); intervalChanged()
+        guard !terminating else { return }
+        if let prompt = intervalPrompt { prompt.focus(); return }
+        let prompt = RefreshIntervalPrompt()
+        intervalPrompt = prompt
+        capsuleState.dialogPresented = true; floatInteractionChanged(true)
+        prompt.completion = { [weak self] value in
+            guard let self = self else { return }
+            self.intervalPrompt = nil; self.capsuleState.dialogPresented = false
+            guard !self.terminating else { return }
+            if let seconds = value { self.applyInterval(seconds) }
+            self.floatInteractionChanged(false); self.trimIdleMemory()
+        }
+        prompt.show(initialSeconds: autoSeconds > 0 ? autoSeconds : lastPositiveRefreshSeconds,
+                    near: isMainWindowProcess ? window : floating)
     }
     func loadCompact() {
         if compactMode { fetchCompact(manual: false); return }
@@ -1517,7 +1581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let elapsed = Date().timeIntervalSince(began)
         let feedback = String(format: "已核对日志 · %.2f 秒", elapsed)
         reportHelperRefresh(success: true, message: feedback)
-        statusText += " · " + feedback
+        statusText = feedback + " · " + intervalDescription
         capsuleState.status = feedback
         capsuleState.indicator = "check"
         statusItem?.button?.toolTip = feedback + " · 双击打开主面板"
@@ -1721,7 +1785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             for (key, value) in [("filterDays", days), ("filterModel", model), ("filterTask", task), ("filterGroup", group)] { usagePreferences.set(value, forKey: key) }
             usagePreferences.synchronize()
         } else { mainWindowOpen = false; persistHostWindowMode() }
-        terminating = true; stopCompactMonitoring(); resetFloatInteraction()
+        terminating = true; intervalPrompt?.cancel(); stopCompactMonitoring(); resetFloatInteraction()
         hostRefreshDeadline?.cancel(); hostRefreshDeadline = nil
         stopFloatMouseMonitoring(); statusSingleClick?.cancel(); manualTimer?.invalidate(); timer?.invalidate(); request?.cancel(); floatingRequest?.cancel(); summaryRequest?.cancel(); refreshCommand?.cancel(); settingsCommand?.cancel(); activeSession?.invalidateAndCancel()
         compactTimer?.invalidate(); floatCollapse?.cancel(); floatAnimation?.stop(); trimWork?.cancel()

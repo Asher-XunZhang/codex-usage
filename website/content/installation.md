@@ -88,9 +88,3 @@ shasum -a 256 "$HOME/Downloads/codex-usage-desktop-v1.0.0-Intel.zip"
 ```
 
 摘要不符时停止使用该副本，从正式发行页重新下载。校验说明见[验证与兼容性](./validation.md)。
-
-## 发给同事和卸载
-
-优先发送发行页或本文档站 的链接。离线传递时发送完整 ZIP，可附上校验文件；不要发送自己的 Codex 数据、账号或支持目录。应用会读取接收者自己的本机记录。
-
-卸载时先退出 App，再从 Finder 移除 App。数据与偏好默认保留；数据位置见[统计口径与隐私](./metrics-and-privacy.md)。

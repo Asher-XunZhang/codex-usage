@@ -6,7 +6,7 @@
 
 A native macOS companion for recorded Codex tokens and account quota. Local statistics, independent windows, no browser required.
 
-[下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [安装与 Intel 排障](docs/INSTALL.md) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
+[使用文档站](https://asher-xunzhang.github.io/codex-usage/) · [下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [安装与 Intel 排障](docs/INSTALL.md) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
 
 ## 直接使用
 
@@ -44,7 +44,7 @@ curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tl
 
 构建最低目标为 macOS 11；已在 Apple Silicon/macOS 26.5 实测。一个实体 Intel/macOS 15.7.9 案例确认移除隔离属性后可启动，但这不代表所有 Intel 机型、系统版本或功能均已验收。
 
-发给同事时，优先发送本仓库或发行页链接，让接收者直接下载；需要离线传递时，发送上表匹配芯片的 **一个完整 ZIP**，也可附上同名 `.zip.sha256` 校验文件。不要发送自己的 Codex 数据文件夹或支持文件夹。应用会统计同事电脑上的记录，不携带发送者的账号、历史用量或聊天。
+请从发行页下载与芯片匹配的原始 ZIP，并使用同名 `.zip.sha256` 文件核对完整性。发行包不包含任何用户的账号、历史用量或聊天记录；应用读取当前使用者本机的 Codex 记录。
 
 ## 三种查看方式
 

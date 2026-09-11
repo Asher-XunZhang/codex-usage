@@ -1,0 +1,6 @@
+# VitePress 1.x still permits Vite 5, whose dev server has known advisories.
+# Its Vue plugin supports Vite 6; pin the patched 6.x line and validate both builds.
+overrides:
+  vite: 6.4.3
+  # Chevrotain pins lodash-es below the patches for CVE-2026-4800 / CVE-2026-2950.
+  lodash-es: 4.18.1

@@ -1,6 +1,6 @@
 # 架构与进程设计
 
-v1.0.0 采用稳定常驻 GUI 加按需独立主面板的设计：菜单栏和浮窗共用宿主，主面板单独运行；关闭主面板即可释放其进程内缓存，同时保持菜单栏与浮窗连续运行。
+v1.0.1 采用稳定常驻 GUI 加按需独立主面板的设计：菜单栏和浮窗共用宿主，主面板单独运行；关闭主面板即可释放其进程内缓存，同时保持菜单栏与浮窗连续运行。
 
 ## 数据如何到达界面
 
@@ -63,11 +63,11 @@ flowchart TB
 | 主面板打开期间 | 比单 GUI 方案多一个 GUI 进程 |
 | 实现复杂度 | 需要同步偏好、动作和扫描所有权，并处理跨进程生命周期 |
 
-发布文档记录的一次使用过程观察中，两次主面板开关后，独立主面板方案收起浮窗约 24.83 MiB，稳定单 GUI 候选约 54.85 MiB；冷启动两者接近。这不是严格受控实验，也不是单独更换语言带来的收益。完整条件、峰值和缺口见 [验证范围](./validation.md)。
+v1.0.0 发布文档记录的一次使用过程观察中，两次主面板开关后，独立主面板方案收起浮窗约 24.83 MiB，稳定单 GUI 候选约 54.85 MiB；冷启动两者接近。这不是严格受控实验，也不是单独更换语言带来的收益。完整条件、峰值和缺口见 [验证范围](./validation.md)。
 
-## 额度弧线配色（未发布）
+## 额度弧线配色
 
-此节描述尚未发布的源码更新；v1.0.0 发行包使用固定绿色弧线。实现位于 [`Sources/Capsule.swift`](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/Sources/Capsule.swift) 的 `CapsuleQuotaColors` 与 `drawOrb()`，作用于浮窗收起时的额度圆弧。
+此配色自 v1.0.1 发布；v1.0.0 发行包使用固定绿色弧线。实现位于 [`Sources/Capsule.swift`](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/Sources/Capsule.swift) 的 `CapsuleQuotaColors` 与 `drawOrb()`，作用于浮窗收起时的额度圆弧。
 
 弧长与颜色使用同一个剩余额度比例。整段剩余弧线只有一种颜色，随额度变化在下表相邻色点之间对 sRGB 分量作线性插值。例如 62.5% 位于 75% 和 50% 两种颜色之间，经过色点时连续过渡。两种主题的色点如下：
 
@@ -97,6 +97,6 @@ flowchart TB
 
 ## 页面依据
 
-进程与内存设计对应提交 [`53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8) 的 [架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/ARCHITECTURE.md)、[README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md) 与 [验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/VALIDATION.md)。
+进程与内存设计对应版本 [`v1.0.1`](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 的 [架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/ARCHITECTURE.md)、[README](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/README.md) 与 [验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
 
-配色章节对应 [PR #3 合并提交 `e7c4ea6` 的架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/docs/ARCHITECTURE.md#额度弧线配色)。
+配色章节对应 [v1.0.1 架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/ARCHITECTURE.md#额度弧线配色)。

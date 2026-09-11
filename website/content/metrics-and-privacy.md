@@ -40,4 +40,4 @@ Token 扫描和账号额度查询是两个流程。自动刷新可关闭，或�
 
 优先提供系统版本、芯片、App 版本、安装方式、复现步骤和经过检查的错误信息。截图中的任务名、路径或账号信息可先遮挡。不要上传 `auth.json`、认证令牌、整个 `~/.codex` 或整个支持目录。
 
-正式功能来源：[v1.0.0 README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md) 与[架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/ARCHITECTURE.md)。
+正式功能来源：[v1.0.1 README](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/README.md) 与[架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/ARCHITECTURE.md)。

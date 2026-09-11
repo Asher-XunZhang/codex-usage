@@ -1,6 +1,6 @@
 # 开发、构建与本地验证
 
-本页提供 v1.0.0 重现与当前源码开发两种检出方式。v1.0.0 的固定提交为 `53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`；本文同步到的主线基线为 [PR #3 合并提交 `e7c4ea6`](https://github.com/Asher-XunZhang/codex-usage/tree/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa)，包含安装助手及尚未发布的额度弧线配色。原始 v1.0.0 App 和发行 ZIP 没有改变。普通使用者直接阅读 [安装指南](./installation.md)，无需安装开发环境。
+本页提供 [v1.0.1 发行源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1)的重现与当前源码开发两种检出方式。v1.0.1 包含额度弧线配色；v1.0.0 的历史源码与发行 ZIP 保持原样。普通使用者直接阅读 [安装指南](./installation.md)，无需安装开发环境。
 
 ## 环境与源码
 
@@ -12,12 +12,12 @@
 xcode-select --install
 ```
 
-重现 v1.0.0 时，获取并固定源码版本：
+重现 v1.0.1 时，获取并固定源码版本：
 
 ```sh
 git clone https://github.com/Asher-XunZhang/codex-usage.git
 cd codex-usage
-git checkout --detach 53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8
+git checkout --detach v1.0.1
 ```
 
 以上在新克隆中操作，不要求切换已有工作目录或丢弃本地修改。开发新功能或生成新配色预览时，应另从最新主线创建分支：
@@ -28,7 +28,7 @@ cd codex-usage-dev
 git switch -c my-change origin/main
 ```
 
-若要精确复现本文的新配色，使用 `e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa` 代替 `origin/main`。下方构建命令作用于所选检出；验证记录属于对应提交，不自动适用于未来改动。
+若要精确复现本文的新配色，使用 `v1.0.1` 代替 `origin/main`。下方构建命令作用于所选检出；验证记录属于对应提交，不自动适用于未来改动。
 
 ## 按芯片构建
 
@@ -101,7 +101,7 @@ python3 scripts/render_previews.py --source Sources/Capsule.swift --output .loca
 
 ### 同步当前源码的浮窗示意图
 
-在包含 PR #3 的当前源码检出中执行以下命令，生成并同步 README 和文档站共用的两张收起图片。50% 应为对应主题的琥珀色；在 v1.0.0 检出中生成的仍是绿色。
+在 v1.0.1 或包含 PR #3 的更新源码检出中执行以下命令，生成并同步 README 和文档站共用的两张收起图片。50% 应为对应主题的琥珀色；在 v1.0.0 检出中生成的仍是绿色。
 
 ```sh
 python3 scripts/render_previews.py --output .local/previews
@@ -109,7 +109,7 @@ cp .local/previews/compact-dark-50.png docs/images/compact-dark-50.png
 cp .local/previews/compact-light-50.png docs/images/compact-light-50.png
 ```
 
-发布前检查两张示意图和相对链接，并标明源码预览与下载包的版本区别。仅补充说明或替换示意图时，沿用已有代码验证结果，无需启动已安装应用或重测无关功能。生成方式来自 [当前源码的本地验证工具说明](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/docs/DEVELOPMENT-TOOLS.md#离屏界面预览)。
+发布前检查两张示意图和相对链接，并标明示意图对应版本与合成数据来源。仅补充说明或替换示意图时，沿用已有代码验证结果，无需启动已安装应用或重测无关功能。生成方式来自 [当前源码的本地验证工具说明](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md#离屏界面预览)。
 
 ## 测量已运行 App 的内存
 
@@ -128,7 +128,7 @@ python3 scripts/measure_processes.py --app '/Applications/Codex用量.app' --dur
 - 离散采样可能漏掉短进程或瞬时峰值，不能用观察峰值保证完整生命周期峰值。
 - 该版本工具不报告 CPU。比较内存时应同时记录系统版本、实验负载、冷/热启动和交互顺序。
 
-每次生成独立命名的性能和样本 JSON，不包含聊天或凭据。完整指标和限制见固定版本 [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/DEVELOPMENT-TOOLS.md)。
+每次生成独立命名的性能和样本 JSON，不包含聊天或凭据。完整指标和限制见固定版本 [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md)。
 
 ## 打包与发行边界
 
@@ -145,11 +145,11 @@ python3 scripts/verify_release.py
 
 ## 固定来源
 
-维护当前安装助手时，应以已合并的 `d6a9407` 或更新的主线为基础，不能使用上面重现原始 App 的 `53c9cf4` 检出。安装器维护顺序见[主线构建与发布说明](https://github.com/Asher-XunZhang/codex-usage/blob/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/docs/BUILDING.md)：先确定并上传新的发行 ZIP，再更新安装器中的版本与固定摘要；不要重新打包并覆盖同名 v1.0.0 ZIP。
+发行 tag 内的安装脚本保留构建时快照，仍可能指向上一版；v1.0.1 的安装助手作为 Release 的独立 `install.sh` 与 `install.sh.sha256` 资产提供。先得到两份最终 ZIP 的摘要，再生成、校验和发布助手资产，最后独立提交更新主线脚本的固定版本与摘要，避免 ZIP 内脚本引用 ZIP 自身摘要。维护安装器时应从最新主线创建分支；不要用发行 tag 内的旧安装脚本安装新 ZIP。具体步骤见[主线构建与发布说明](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/BUILDING.md)；不要重新打包并覆盖已发布的同名 ZIP。
 
-- [v1.0.0 源码](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8)
-- [构建与发布文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/BUILDING.md)
-- [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/DEVELOPMENT-TOOLS.md)
-- [版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/CHANGELOG.md)
+- [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1)
+- [构建与发布文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)
+- [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md)
+- [版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/CHANGELOG.md)
 
-- [当前源码与未发布更新](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/CHANGELOG.md#unreleased)
+- [当前主线更新](https://github.com/Asher-XunZhang/codex-usage/blob/main/CHANGELOG.md)

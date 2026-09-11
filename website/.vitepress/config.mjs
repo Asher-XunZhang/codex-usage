@@ -32,7 +32,7 @@ export default defineConfig({
     logo: '/icon.png',
     siteTitle: 'Codex 用量 · 文档',
     nav: [
-      { text: 'v1.0.0 下载', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.0' }
+      { text: 'v1.0.1 下载', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1' }
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/Asher-XunZhang/codex-usage' }],
     sidebar: [

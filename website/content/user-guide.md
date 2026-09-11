@@ -1,6 +1,6 @@
 # 使用指南
 
-本页介绍 v1.0.0 的主面板、菜单栏和圆形浮窗，并单独标注尚未发布的源码更新。三种界面均为 macOS 原生窗口，无需在浏览器中查看。
+本页介绍 v1.0.1 的主面板、菜单栏和圆形浮窗。三种界面均为 macOS 原生窗口，无需在浏览器中查看。
 
 ## 首次使用
 
@@ -31,14 +31,14 @@
 
 ## 圆形浮窗：桌面常驻摘要
 
-收起后的浮窗为 76×76 的扁平圆环，弧线表示剩余额度，环宽为 5 点；v1.0.0 下载包使用固定绿色。支持深色和浅色主题、置顶、拖动，以及独立的时间、模型和任务筛选。
+收起后的浮窗为 76×76 的扁平圆环，弧线表示剩余额度，环宽为 5 点；v1.0.1 随剩余额度由绿经黄、橙连续转红。支持深色和浅色主题、置顶、拖动，以及独立的时间、模型和任务筛选。
 
 <p>
-  <img src="/compact-dark-50.png" width="96" alt="当前源码的深色收起浮窗，50% 剩余额度为琥珀色，合成演示数据">
-  <img src="/compact-light-50.png" width="96" alt="当前源码的浅色收起浮窗，50% 剩余额度为琥珀色，合成演示数据">
+  <img src="/compact-dark-50.png" width="96" alt="v1.0.1 深色收起浮窗，50% 剩余额度为琥珀色，合成演示数据">
+  <img src="/compact-light-50.png" width="96" alt="v1.0.1 浅色收起浮窗，50% 剩余额度为琥珀色，合成演示数据">
 </p>
 
-上方是**当前源码的收起预览**：50% 剩余额度为琥珀色。此配色尚未包含在 v1.0.0 下载包中。
+上方是 **v1.0.1 的收起预览**：50% 剩余额度为琥珀色，使用合成示例数据。
 
 <p>
   <img src="/expanded-dark.png" width="300" alt="深色浮窗详情，合成演示数据">
@@ -57,13 +57,13 @@
 
 选择菜单打开期间会暂缓收起，也可手动保持展开。主题切换在同一窗口内完成；动画遵循系统的「减少动态效果」设置。
 
-## 当前源码：额度弧线配色（未发布）
+## 额度弧线配色
 
-[PR #3](https://github.com/Asher-XunZhang/codex-usage/pull/3) 已合并。当前源码的弧线随剩余额度降低，由绿经过黄、橙连续转为红色；整段剩余弧线保持同一种颜色。5% 及以下保持警示红，0% 只保留中性底环和 `0%`，未知额度显示「—」。
+[PR #3](https://github.com/Asher-XunZhang/codex-usage/pull/3) 已包含在 v1.0.1。弧线随剩余额度降低，由绿经过黄、橙连续转为红色；整段剩余弧线保持同一种颜色。5% 及以下保持警示红，0% 只保留中性底环和 `0%`，未知额度显示「—」。
 
 弧线对应上方「周余」等标签所指的**账号额度**；下方 Token 数量由独立的时间、模型和任务筛选决定，两者不能互相换算。旧快照保留 `*` 标记，颜色变化不能用来判断数据是否已刷新。
 
-现有 v1.0.0 下载包仍使用固定绿色弧线，安装后与源码预览配色不同属于正常情况。具体色值、动画及边界规则见 [额度弧线配色](./architecture.md#额度弧线配色-未发布)。
+v1.0.0 使用固定绿色弧线；更新到 v1.0.1 后即可使用新配色。具体色值、动画及边界规则见 [额度弧线配色](./architecture.md#额度弧线配色)。
 
 ## 刷新：何时会看到新数据
 
@@ -87,4 +87,4 @@
 
 ## 页面依据
 
-已发布功能对应 v1.0.0、提交 [`53c9cf4`](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8) 的 [README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md) 与 [验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/VALIDATION.md)。未发布配色和收起示意图来自 [PR #3 合并提交 `e7c4ea6`](https://github.com/Asher-XunZhang/codex-usage/tree/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa)，不代表现有下载包已更新。
+已发布功能与示意图对应 [v1.0.1 README](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/README.md) 与[验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。配色由 [PR #3](https://github.com/Asher-XunZhang/codex-usage/pull/3) 引入；历史实机与内存观察仍按原版本标注。

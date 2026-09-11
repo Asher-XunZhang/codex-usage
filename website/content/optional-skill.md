@@ -14,7 +14,7 @@
 
 ## 独立运行统计脚本
 
-取得 v1.0.0 源码后，在仓库根目录运行：
+取得 [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 后，在仓库根目录运行：
 
 ```sh
 python3 skill/scripts/token_usage.py --help
@@ -50,4 +50,4 @@ hook 不会自行完成配置或建立信任；是否接入由使用者决定。
 
 ## 页面依据
 
-本页基于提交 [`53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8) 的 [可选技能文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/SKILL.md) 与 [README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md)，不依赖未发布变更。
+本页基于版本 [`v1.0.1`](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 的 [可选技能文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/SKILL.md) 与 [README](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/README.md)。

@@ -35,7 +35,7 @@ flowchart LR
 
 ## 额度弧线配色
 
-此节描述尚未发布的源码更新；v1.0.0 发行包使用固定绿色弧线。实现位于 [`Sources/Capsule.swift`](../Sources/Capsule.swift) 的 `CapsuleQuotaColors` 与 `drawOrb()`，作用于浮窗收起时的额度圆弧。
+此节描述 v1.0.1 发行版的额度配色；此前 v1.0.0 发行包使用固定绿色弧线。实现位于 [`Sources/Capsule.swift`](../Sources/Capsule.swift) 的 `CapsuleQuotaColors` 与 `drawOrb()`，作用于浮窗收起时的额度圆弧。
 
 弧长与颜色使用同一个剩余额度比例。整段剩余弧线只有一种颜色，随额度变化在下表相邻色点之间对 sRGB 分量作线性插值。例如 62.5% 位于 75% 和 50% 两种颜色之间，经过色点时连续过渡。两种主题的色点如下：
 

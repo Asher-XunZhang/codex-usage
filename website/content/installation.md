@@ -6,17 +6,17 @@
 
 ## 快捷安装助手（推荐）
 
-安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 于 **2026-09-11 合并到 `main`**。以下入口固定到合并提交 [`d6a9407`](https://github.com/Asher-XunZhang/codex-usage/blob/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh)，脚本内容与合并前完成验证的版本相同。安装的 App 仍是正式的 **v1.0.0**，原始发行 ZIP 未更换；安装助手的验证边界见[验证与兼容性](./validation.md)。 安装助手不会编译当前源码，因此不包含[尚未发布的额度配色](./user-guide.md#当前源码-额度弧线配色-未发布)。
+安装助手下载正式的 **v1.0.1** App，包含[额度弧线配色](./user-guide.md#额度弧线配色)。以下入口固定到 v1.0.1 发行页的 `install.sh` 资产；运行前可下载审阅脚本中的版本和固定摘要。助手不会编译源码，验证边界见[验证与兼容性](./validation.md)。
 
 助手自动识别芯片，校验固定 ZIP 摘要、可执行文件架构及 App 签名完整性。用户在交互终端输入 `install` 后，才会处理新安装这份 App 的下载隔离属性。默认安装到 `~/Applications/Codex用量.app`，无需管理员密码；不会改变系统全局安全设置。
 
-请先确认信任[仓库及脚本来源](https://github.com/Asher-XunZhang/codex-usage/blob/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh)，再在 macOS「终端」执行：
+请先确认信任[仓库及脚本来源](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh)，再在 macOS「终端」执行：
 
 ```sh
 usage_installer_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-usage-install.XXXXXX")" &&
 curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --connect-timeout 20 --max-time 60 --retry 2 \
-  'https://raw.githubusercontent.com/Asher-XunZhang/codex-usage/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh' \
+  'https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/install.sh' \
   --output "$usage_installer_dir/install.sh" &&
 /bin/bash "$usage_installer_dir/install.sh"
 ```
@@ -25,14 +25,14 @@ curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tl
 
 ### 离线安装与参数
 
-离线安装是另一种方式，**不用先执行上面的在线安装命令**。在可联网时，将[固定版本安装脚本](https://raw.githubusercontent.com/Asher-XunZhang/codex-usage/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh)保存为 `~/Downloads/codex-usage-install.sh`，并下载匹配芯片的原始 ZIP。准备好两个文件后，在离线 Mac 的终端执行：
+离线安装是另一种方式，**不用先执行上面的在线安装命令**。在可联网时，将[安装脚本](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/install.sh)保存为 `~/Downloads/codex-usage-install.sh`，并下载匹配芯片的原始 ZIP。准备好两个文件后，在离线 Mac 的终端执行：
 
 ```sh
 /bin/bash "$HOME/Downloads/codex-usage-install.sh" \
-  --archive "$HOME/Downloads/codex-usage-desktop-v1.0.0-Intel.zip"
+  --archive "$HOME/Downloads/codex-usage-desktop-v1.0.1-Intel.zip"
 ```
 
-Apple Silicon 应选择对应的 `AppleSilicon.zip`。脚本只接受该架构的原始 v1.0.0 ZIP，不接受重新压缩、改名后内容不符或其他版本的包。
+Apple Silicon 应选择对应的 `AppleSilicon.zip`。脚本只接受该架构的原始 v1.0.1 ZIP，不接受重新压缩、改名后内容不符或其他版本的包。
 
 | 参数 | 含义 |
 | --- | --- |
@@ -59,8 +59,8 @@ Apple Silicon 应选择对应的 `AppleSilicon.zip`。脚本只接受该架构�
 
 | Mac 芯片 | 安装包 |
 | --- | --- |
-| Intel | [下载 Intel ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-Intel.zip) |
-| Apple Silicon（M 系列） | [下载 Apple Silicon ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-AppleSilicon.zip) |
+| Intel | [下载 Intel ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip) |
+| Apple Silicon（M 系列） | [下载 Apple Silicon ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip) |
 
 1. 完整解压 ZIP，将其中的 `Codex用量.app` 拖到「应用程序」。GitHub 的 **Source code** 包用于开发，不能直接双击运行。
 2. 双击 App。首次启动会校验并解压随包运行组件，首次历史索引也可能需要等待。
@@ -76,15 +76,15 @@ Apple Silicon 应选择对应的 `AppleSilicon.zip`。脚本只接受该架构�
 
 ## 核对下载文件
 
-发行页提供同名 `.zip.sha256`。固定 v1.0.0 摘要如下：
+发行页提供同名 `.zip.sha256`，以及安装助手的 [`install.sh.sha256`](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/install.sh.sha256)。下载对应校验文件，与本机计算结果核对：
 
-| 架构 | ZIP 的 SHA-256 |
+| 架构 | SHA-256 校验文件 |
 | --- | --- |
-| Intel | `4dbcd5b12cd4c96580b223dafdb612dc6f2a268913923e8a5f788278dba0e4d2` |
-| Apple Silicon | `18bad090d4dd52a4d31177fe8cca0be9d52dc8e165650765a16cc6110b29c220` |
+| Intel | [Intel .zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip.sha256) |
+| Apple Silicon | [Apple Silicon .zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip.sha256) |
 
 ```sh
-shasum -a 256 "$HOME/Downloads/codex-usage-desktop-v1.0.0-Intel.zip"
+shasum -a 256 "$HOME/Downloads/codex-usage-desktop-v1.0.1-Intel.zip"
 ```
 
 摘要不符时停止使用该副本，从正式发行页重新下载。校验说明见[验证与兼容性](./validation.md)。

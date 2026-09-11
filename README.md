@@ -12,7 +12,7 @@ A native macOS companion for recorded Codex tokens and account quota. Local stat
 
 ### 自动选择芯片并安装（推荐）
 
-安装助手适用于 Intel 和 Apple Silicon，使用 macOS 自带工具，**不需要 Python、Homebrew、开发工具或管理员密码**。它固定安装正式发布的 **v1.0.0**，校验 ZIP 的 SHA-256 和 App 签名完整性，并安装到 `~/Applications/Codex用量.app`。
+安装助手适用于 Intel 和 Apple Silicon，使用 macOS 自带工具，**不需要 Python、Homebrew、开发工具或管理员密码**。它固定安装正式发布的 **v1.0.1**，校验 ZIP 的 SHA-256 和 App 签名完整性，并安装到 `~/Applications/Codex用量.app`。
 
 当前发行使用 ad hoc 签名，**未经过 Developer ID 签名或 Apple 公证**。助手会先展示来源、安装位置和操作说明，要求在终端输入 `install` 确认信任该发布；验证通过后，仅移除新安装这份 App 的隔离属性。SHA-256 与签名完整性校验不能替代开发者身份认证。这是免费的一次性安装方式，不是 Apple 公证，也不改变系统全局安全设置。
 
@@ -22,7 +22,7 @@ A native macOS companion for recorded Codex tokens and account quota. Local stat
 usage_installer_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-usage-install.XXXXXX")" &&
 curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --connect-timeout 20 --max-time 60 --retry 2 \
-  'https://raw.githubusercontent.com/Asher-XunZhang/codex-usage/main/scripts/install.sh' \
+  'https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/install.sh' \
   --output "$usage_installer_dir/install.sh" &&
 /bin/bash "$usage_installer_dir/install.sh"
 ```
@@ -33,8 +33,8 @@ curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tl
 
 | Mac 芯片 | 下载文件 |
 | --- | --- |
-| Apple Silicon：M 系列 | [codex-usage-desktop-v1.0.0-AppleSilicon.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-AppleSilicon.zip) |
-| Intel | [codex-usage-desktop-v1.0.0-Intel.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-Intel.zip) |
+| Apple Silicon：M 系列 | [codex-usage-desktop-v1.0.1-AppleSilicon.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip) |
+| Intel | [codex-usage-desktop-v1.0.1-Intel.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip) |
 
 1. 在「 → 关于本机」确认芯片，使用 Safari 从上表下载匹配的原始 ZIP。GitHub 自动生成的 **Source code** 包用于开发，不能直接当作应用打开。
 2. 完整解压，把 `Codex用量.app` 拖到「应用程序」，然后双击。无需另装 Python、Node.js、Homebrew 或开发工具；首次启动会校验并离线解压随包组件。
@@ -65,7 +65,7 @@ curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tl
 
 当前源码中，收起弧线随剩余额度降低，由绿经过黄、橙平滑转为红色。整段剩余弧线使用同一种颜色；5% 及以下为警示红，0% 只保留底环，未知额度显示「—」。弧线对应上方「周余」等标签所指的账号额度，与下方筛选后的 Token 数量分别显示。深浅主题的色值和边界规则见 [额度弧线配色](docs/ARCHITECTURE.md#额度弧线配色)。
 
-这项配色属于 [尚未发布的更新](CHANGELOG.md#unreleased)，上方收起示意图展示的是更新后的源码效果；现有 v1.0.0 下载包仍使用固定绿色弧线。
+这项配色已包含在 [v1.0.1](CHANGELOG.md) 发行包中，上方收起示意图展示了 50% 剩余额度的琥珀色效果。
 
 浮窗数字区左键打开主面板；右键或 Control-click 打开功能菜单；按住数字区移动超过 3 点时只拖动。选择菜单打开期间暂缓收起，可手动保持展开。动画遵循系统「减少动态效果」设置。
 

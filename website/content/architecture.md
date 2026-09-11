@@ -5,7 +5,9 @@ v1.0.0 采用稳定常驻 GUI 加按需独立主面板的设计：菜单栏和�
 ## 数据如何到达界面
 
 ```mermaid
-flowchart LR
+flowchart TB
+  accTitle: Codex 用量的数据流向
+  accDescr: 本机记账经 Python 增量索引写入 SQLite。常驻 GUI 读取摘要，按需主面板通过本机 HTTP 服务查询，账号额度由短时助手独立读取。
   L[本机 Codex 已落盘记账] --> P[Python 增量索引]
   P --> DB[(SQLite 聚合缓存)]
   H[常驻 GUI：菜单栏与浮窗] --> N[短时原生摘要读取]
@@ -63,6 +65,30 @@ flowchart LR
 
 发布文档记录的一次使用过程观察中，两次主面板开关后，独立主面板方案收起浮窗约 24.83 MiB，稳定单 GUI 候选约 54.85 MiB；冷启动两者接近。这不是严格受控实验，也不是单独更换语言带来的收益。完整条件、峰值和缺口见 [验证范围](./validation.md)。
 
+## 额度弧线配色（未发布）
+
+此节描述尚未发布的源码更新；v1.0.0 发行包使用固定绿色弧线。实现位于 [`Sources/Capsule.swift`](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/Sources/Capsule.swift) 的 `CapsuleQuotaColors` 与 `drawOrb()`，作用于浮窗收起时的额度圆弧。
+
+弧长与颜色使用同一个剩余额度比例。整段剩余弧线只有一种颜色，随额度变化在下表相邻色点之间对 sRGB 分量作线性插值。例如 62.5% 位于 75% 和 50% 两种颜色之间，经过色点时连续过渡。两种主题的色点如下：
+
+| 剩余额度 | 颜色 | 深色主题 | 浅色主题 |
+| --- | --- | --- | --- |
+| 100% | 翡翠绿 | `#35DE94` | `#009E68` |
+| 75% | 黄绿色 | `#A5D76D` | `#708F30` |
+| 50% | 琥珀色 | `#E9BC60` | `#AF811B` |
+| 25% | 暖橙色 | `#F09858` | `#C97432` |
+| 10% | 珊瑚红 | `#EE786E` | `#D76053` |
+| 5% | 警示红 | `#EA6565` | `#D4474F` |
+
+深色主题使用较明亮的颜色，浅色主题加深色值以保持辨识度。弧线表示当前「周余」等标签所指的账号额度；Token 数值仍由独立的时间、模型和任务筛选决定，不能用 Token 数量反推额度百分比。
+
+- `0 < 剩余额度 ≤ 5%` 时保持警示红；0% 不绘制剩余弧线，只显示中性底环与 `0%`。
+- 缺失或非有限额度显示「—」与中性底环；有限但越界的比例限制在 0–100%。
+- 旧快照沿用该快照的颜色，并在数值后保留 `*` 标记。颜色不代表数据已经刷新。
+
+两组色点各初始化一次。实际额度改变时，颜色读取现有 0.22 秒动画中的 `liquidFraction`，与弧长同步；没有新增闲置计时器或循环动画。浮窗隐藏、已展开或系统启用「减少动态效果」时，额度直接更新。主题切换继续复用同一个窗口和绘制视图。此变更没有重新测量整机内存，不能由色点数量推导完整应用的内存占用。
+
+
 ## 数据与权限边界
 
 主面板 HTTP 服务使用实例标识隔离请求，退出时清理自己的状态与进程。账户额度通过本机 Codex app-server 的固定只读方法取得，代码没有重置卡兑换动作。
@@ -71,4 +97,6 @@ flowchart LR
 
 ## 页面依据
 
-本页对应提交 [`53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8) 的 [架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/ARCHITECTURE.md)、[README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md) 与 [验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/VALIDATION.md)。
+进程与内存设计对应提交 [`53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`](https://github.com/Asher-XunZhang/codex-usage/tree/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8) 的 [架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/ARCHITECTURE.md)、[README](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/README.md) 与 [验证记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/VALIDATION.md)。
+
+配色章节对应 [PR #3 合并提交 `e7c4ea6` 的架构文档](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/docs/ARCHITECTURE.md#额度弧线配色)。

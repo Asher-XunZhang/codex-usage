@@ -1,6 +1,6 @@
 # 开发、构建与本地验证
 
-本页以 v1.0.0 App 的固定源码提交 **`53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`** 为依据，以下步骤用于重现该首次公开版本。免费安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 合并；截至 2026-09-11，`main` 为 [`d6a9407`](https://github.com/Asher-XunZhang/codex-usage/tree/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e)，原始 v1.0.0 App 和发行 ZIP 没有改变。普通使用者直接阅读 [安装指南](./installation.md)，无需安装开发环境。
+本页提供 v1.0.0 重现与当前源码开发两种检出方式。v1.0.0 的固定提交为 `53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8`；本文同步到的主线基线为 [PR #3 合并提交 `e7c4ea6`](https://github.com/Asher-XunZhang/codex-usage/tree/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa)，包含安装助手及尚未发布的额度弧线配色。原始 v1.0.0 App 和发行 ZIP 没有改变。普通使用者直接阅读 [安装指南](./installation.md)，无需安装开发环境。
 
 ## 环境与源码
 
@@ -12,7 +12,7 @@
 xcode-select --install
 ```
 
-获取并固定源码版本：
+重现 v1.0.0 时，获取并固定源码版本：
 
 ```sh
 git clone https://github.com/Asher-XunZhang/codex-usage.git
@@ -20,7 +20,15 @@ cd codex-usage
 git checkout --detach 53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8
 ```
 
-以上在新克隆中操作，不要求切换已有工作目录或丢弃本地修改。要开发新功能，可在此基础上另建自己的分支。
+以上在新克隆中操作，不要求切换已有工作目录或丢弃本地修改。开发新功能或生成新配色预览时，应另从最新主线创建分支：
+
+```sh
+git clone https://github.com/Asher-XunZhang/codex-usage.git codex-usage-dev
+cd codex-usage-dev
+git switch -c my-change origin/main
+```
+
+若要精确复现本文的新配色，使用 `e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa` 代替 `origin/main`。下方构建命令作用于所选检出；验证记录属于对应提交，不自动适用于未来改动。
 
 ## 按芯片构建
 
@@ -91,6 +99,18 @@ python3 scripts/render_previews.py --source Sources/Capsule.swift --output .loca
 
 输出包括图片状态清单、源码与驱动摘要、编译和渲染日志。临时源码、二进制和模块缓存自动清理。默认 `.local/` 被 Git 忽略，同名预览会被替换；比较版本时请指定不同输出目录。离屏预览验证绘制布局，真实鼠标事件、窗口层级与系统菜单仍需交互验收。
 
+### 同步当前源码的浮窗示意图
+
+在包含 PR #3 的当前源码检出中执行以下命令，生成并同步 README 和文档站共用的两张收起图片。50% 应为对应主题的琥珀色；在 v1.0.0 检出中生成的仍是绿色。
+
+```sh
+python3 scripts/render_previews.py --output .local/previews
+cp .local/previews/compact-dark-50.png docs/images/compact-dark-50.png
+cp .local/previews/compact-light-50.png docs/images/compact-light-50.png
+```
+
+发布前检查两张示意图和相对链接，并标明源码预览与下载包的版本区别。仅补充说明或替换示意图时，沿用已有代码验证结果，无需启动已安装应用或重测无关功能。生成方式来自 [当前源码的本地验证工具说明](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/docs/DEVELOPMENT-TOOLS.md#离屏界面预览)。
+
 ## 测量已运行 App 的内存
 
 先手动将 App 切到要测量的状态，保持不操作，再采样：
@@ -131,3 +151,5 @@ python3 scripts/verify_release.py
 - [构建与发布文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/BUILDING.md)
 - [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/docs/DEVELOPMENT-TOOLS.md)
 - [版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/53c9cf4fcfc3c549be61dbfe77facb2af1b87ca8/CHANGELOG.md)
+
+- [当前源码与未发布更新](https://github.com/Asher-XunZhang/codex-usage/blob/e7c4ea6c3e96b8e0c2b64807a8fb503e984428aa/CHANGELOG.md#unreleased)

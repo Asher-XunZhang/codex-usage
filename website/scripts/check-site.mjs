@@ -25,6 +25,15 @@ function getAnchors(file) {
   return anchors.get(file)
 }
 let checked = 0
+let diagrams = 0
+for (const page of pages) {
+  const source = readFileSync(`content/${page}.md`, 'utf8')
+  const expected = [...source.matchAll(/^```mermaid\s*$/gm)].length
+  const html = readFileSync(join(root, `${page}.html`), 'utf8')
+  assert.ok(!html.includes('language-mermaid'), `Mermaid rendered as a code block: ${page}`)
+  assert.equal([...html.matchAll(/class="mermaid-diagram"/g)].length, expected, `Missing diagram component: ${page}`)
+  diagrams += expected
+}
 for (const file of files.filter(file => file.endsWith('.html'))) {
   const html = readFileSync(file, 'utf8')
   assert.match(html, /<html[^>]*lang="zh-CN"/, `Missing Chinese language: ${file}`)
@@ -50,4 +59,4 @@ for (const file of files.filter(file => file.endsWith('.html'))) {
   }
 }
 const total = files.reduce((sum, path) => sum + statSync(path).size, 0)
-console.log(`Checked ${pages.length} documentation pages, ${checked} local links/assets, ${(total / 1024 / 1024).toFixed(2)} MiB static output.`)
+console.log(`Checked ${pages.length} documentation pages, ${checked} local links/assets, ${diagrams} diagram mounts, ${(total / 1024 / 1024).toFixed(2)} MiB static output.`)

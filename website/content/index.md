@@ -59,6 +59,8 @@ outline: false
 
 [架构与内存](./architecture.md) · [验证与兼容性](./validation.md) · [开发与发布](./development.md) · [可选 Token 统计技能](./optional-skill.md)
 
-<p class="docs-version">当前 App：v1.0.0 · Intel / Apple Silicon。最低构建目标为 macOS 11；具体实测范围见验证页。首次下载可能需要 macOS 来源确认。</p>
+<p class="docs-version">当前下载版本：v1.0.0 · Intel / Apple Silicon。最低构建目标为 macOS 11；具体实测范围见验证页。首次下载可能需要 macOS 来源确认。</p>
 
 这是独立开源工具，与 OpenAI 官方无隶属关系。Token 记录、订阅额度和账单是不同口径。本网站展示使用说明，实际统计在本机 App 中查看。
+
+源码已加入[随剩余额度变化的弧线配色](./user-guide.md#当前源码-额度弧线配色-未发布)，尚未包含在当前下载包中。

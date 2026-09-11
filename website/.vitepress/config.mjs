@@ -9,6 +9,18 @@ export default defineConfig({
   base: '/codex-usage/',
   cleanUrls: false,
   appearance: true,
+  markdown: {
+    config(md) {
+      const fence = md.renderer.rules.fence
+      md.renderer.rules.fence = (tokens, index, options, env, self) => {
+        if (tokens[index].info.trim() === 'mermaid') {
+          const source = md.utils.escapeHtml(JSON.stringify(tokens[index].content))
+          return `<MermaidDiagram :source="${source}" />\n`
+        }
+        return fence(tokens, index, options, env, self)
+      }
+    }
+  },
   head: [
     ['link', { rel: 'icon', type: 'image/png', href: '/codex-usage/icon.png' }],
     ['meta', { name: 'theme-color', content: '#087c63' }]

@@ -6,7 +6,7 @@
 
 ## 快捷安装助手（推荐）
 
-安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 于 **2026-09-11 合并到 `main`**。以下入口固定到合并提交 [`d6a9407`](https://github.com/Asher-XunZhang/codex-usage/blob/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh)，脚本内容与合并前完成验证的版本相同。安装的 App 仍是正式的 **v1.0.0**，原始发行 ZIP 未更换；安装助手的验证边界见[验证与兼容性](./validation.md)。
+安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 于 **2026-09-11 合并到 `main`**。以下入口固定到合并提交 [`d6a9407`](https://github.com/Asher-XunZhang/codex-usage/blob/d6a9407a86325eaf210e7d69f58a63ba4f5eab8e/scripts/install.sh)，脚本内容与合并前完成验证的版本相同。安装的 App 仍是正式的 **v1.0.0**，原始发行 ZIP 未更换；安装助手的验证边界见[验证与兼容性](./validation.md)。 安装助手不会编译当前源码，因此不包含[尚未发布的额度配色](./user-guide.md#当前源码-额度弧线配色-未发布)。
 
 助手自动识别芯片，校验固定 ZIP 摘要、可执行文件架构及 App 签名完整性。用户在交互终端输入 `install` 后，才会处理新安装这份 App 的下载隔离属性。默认安装到 `~/Applications/Codex用量.app`，无需管理员密码；不会改变系统全局安全设置。
 

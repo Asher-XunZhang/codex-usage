@@ -6,7 +6,7 @@
 
 A native macOS companion for recorded Codex tokens and account quota. Local statistics, independent windows, no browser required.
 
-[下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [安装与 Intel 排障](docs/INSTALL.md) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
+[使用文档站](https://asher-xunzhang.github.io/codex-usage/) · [下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [安装与 Intel 排障](docs/INSTALL.md) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
 
 ## 直接使用
 

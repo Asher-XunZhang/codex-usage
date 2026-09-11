@@ -2,7 +2,7 @@ name: Documentation
 
 on:
   push:
-    branches: [main, codex/github-pages-docs]
+    branches: [main]
     paths: ['website/**', 'docs/images/**', '.github/workflows/docs.yml']
   pull_request:
     paths: ['website/**', 'docs/images/**', '.github/workflows/docs.yml']
@@ -40,7 +40,7 @@ jobs:
           retention-days: 1
 
   deploy:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/github-pages-docs')
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

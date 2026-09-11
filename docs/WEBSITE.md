@@ -38,7 +38,7 @@ VitePress 使用 MIT 许可证；完整依赖版本保留在锁文件中。`pnpm
 
 仓库 Pages 的发布来源须为 **GitHub Actions**。工作流仅在部署 job 请求 `pages: write` 和 `id-token: write`，使用 `github-pages` environment；该环境应只允许指定的发布分支。不要用 `pull_request_target` 来构建或发布外部 PR，也不要添加个人 Token。
 
-首次上线可以短暂允许明确指定的 `codex/github-pages-docs` 分支，以便在 PR 合并前验证正式站点。上线后同时移除工作流 `push.branches` 中的临时分支、`deploy.if` 中的临时分支条件，再移除环境中的临时分支许可，后续仅由 `main` 发布。
+`push.branches`、`deploy.if` 和 `github-pages` 环境的部署分支规则均仅允许 `main`。手动触发非主分支时只进行构建，不发布。不要为普通 PR 放宽环境的分支限制。
 
 ## 路径与内容约定
 

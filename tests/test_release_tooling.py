@@ -149,7 +149,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
                     'resources/runtimes/manifest.json', 'resources/THIRD-PARTY.md',
                     'resources/third-party-licenses/LICENSE', 'skill/SKILL.md',
                     'skill/agents/openai.yaml', 'skill/scripts/token_usage.py', 'docs/images/demo.png',
-                    'scripts/preview/main.swift']
+                    'scripts/preview/main.swift', 'scripts/install.sh']
         excluded = ['resources/runtimes/runtime.tar.gz', 'tests/__pycache__/cache.pyc',
                     'tests/private.log', 'backend/local.sqlite']
         for name in required + excluded:

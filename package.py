@@ -18,7 +18,7 @@ DOCUMENTS = ['README.md', 'LICENSE', 'THIRD-PARTY.md', 'CHANGELOG.md']
 PRIVATE_SUFFIXES = ('.jsonl', '.sqlite', '.sqlite3', '.db', '.csv', '.log', '.pyc', '.pyo')
 PRIVATE_NAMES = {'auth.json', 'config.toml', '.DS_Store', '.env'}
 SOURCE_TREES = {'Sources': {'.swift', '.c', '.h'}, 'backend': {'.py'},
-                'tests': {'.py'}, 'scripts': {'.py', '.swift'}, 'docs': {'.md', '.png'},
+                'tests': {'.py'}, 'scripts': {'.py', '.swift', '.sh'}, 'docs': {'.md', '.png'},
                 'skill': {'.md', '.yaml', '.py'}}
 
 

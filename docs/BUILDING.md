@@ -59,4 +59,10 @@ python3 scripts/verify_release.py
 
 发行文件在 `dist/`。ZIP 包含 App、文档、项目许可证、第三方许可证、可构建源码以及逐文件校验清单；外部同名 `.zip.sha256` 用于校验整个下载文件。只使用明确的文件清单，不打包日志、数据库、认证、偏好、编译缓存或本机实验数据。
 
-构建使用 ad hoc 签名。公开下载后的首次信任体验、Developer ID 签名、公证和干净设备验收是独立事项，本仓库不删除隔离属性或绕过 Gatekeeper。
+构建使用 ad hoc 签名，没有 Developer ID 身份认证或 Apple 公证。应用自身不移除隔离属性；可选的 [`scripts/install.sh`](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh) 在用户明确确认后，对固定发布包校验 SHA-256 与签名完整性，再仅移除新安装这份 App 的隔离属性。它不改变系统全局安全设置。安装流程和限制见 [安装指南](INSTALL.md)。
+
+安装助手当前固定使用 v1.0.0 的两种架构 ZIP 及各自的 SHA-256，不自动追踪 `latest`；既有 v1.0.0 发布资产保持不变。发布新版本时，先定稿、验收并上传两个架构的 ZIP，再根据实际上传资产的摘要，更新 `main` 安装助手中的固定版本、资产名和预期 SHA-256；不要只替换下载 URL 或将运行时从同一下载位置取回的摘要当作固定校验值。下载摘要和 ad hoc 签名完整性不等于发布者身份认证。
+
+ZIP 内的 `source/` 是打包时的源码快照，其中的安装助手可能仍指向旧版本，具体以该脚本的 `--help` 输出为准。不要为了回写 ZIP 自身的摘要而再次打包、覆盖已发布的同名 ZIP：这会改变摘要、形成自引用，并使已有安装助手的固定校验失效。最新安装助手单独从 `main` 获取，发布资产保持不变。
+
+发行验收需要分别覆盖：包结构与签名完整性、离线组件启动、真实 Intel/Apple Silicon 启动，以及在干净设备上从 Safari 等实际渠道首次下载后的信任流程。通过本机 `codesign --verify` 或 Rosetta 运行，不能代替实体 Intel 和首次下载验收。Apple 的 [可信执行故障排查](https://developer.apple.com/forums/thread/706442) 说明了隔离属性传播及使用干净环境测试的原因。

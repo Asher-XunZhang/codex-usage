@@ -6,22 +6,45 @@
 
 A native macOS companion for recorded Codex tokens and account quota. Local statistics, independent windows, no browser required.
 
-[下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
+[下载安装包](https://github.com/Asher-XunZhang/codex-usage/releases/latest) · [安装与 Intel 排障](docs/INSTALL.md) · [构建与开发](docs/BUILDING.md) · [架构](docs/ARCHITECTURE.md) · [验证范围](docs/VALIDATION.md)
 
 ## 直接使用
+
+### 自动选择芯片并安装（推荐）
+
+安装助手适用于 Intel 和 Apple Silicon，使用 macOS 自带工具，**不需要 Python、Homebrew、开发工具或管理员密码**。它固定安装正式发布的 **v1.0.0**，校验 ZIP 的 SHA-256 和 App 签名完整性，并安装到 `~/Applications/Codex用量.app`。
+
+当前发行使用 ad hoc 签名，**未经过 Developer ID 签名或 Apple 公证**。助手会先展示来源、安装位置和操作说明，要求在终端输入 `install` 确认信任该发布；验证通过后，仅移除新安装这份 App 的隔离属性。SHA-256 与签名完整性校验不能替代开发者身份认证。这是免费的一次性安装方式，不是 Apple 公证，也不改变系统全局安全设置。
+
+在「终端」中执行以下命令。脚本先保存为文件；也可先阅读 [安装助手源码](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh)，再执行：
+
+```sh
+usage_installer_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-usage-install.XXXXXX")" &&
+curl --fail --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+  --connect-timeout 20 --max-time 60 --retry 2 \
+  'https://raw.githubusercontent.com/Asher-XunZhang/codex-usage/main/scripts/install.sh' \
+  --output "$usage_installer_dir/install.sh" &&
+/bin/bash "$usage_installer_dir/install.sh"
+```
+
+已有同名 App 时，助手会停止，保留旧版本；按 [迁移说明](docs/INSTALL.md#已有版本迁移与卸载)处理后再试。助手不修改 `~/.codex`、历史用量或支持目录。离线安装、安装位置选择、PR 分支预览及完整排障见 [安装指南](docs/INSTALL.md)。
+
+### 手动下载安装包
 
 | Mac 芯片 | 下载文件 |
 | --- | --- |
 | Apple Silicon：M 系列 | [codex-usage-desktop-v1.0.0-AppleSilicon.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-AppleSilicon.zip) |
 | Intel | [codex-usage-desktop-v1.0.0-Intel.zip](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.0/codex-usage-desktop-v1.0.0-Intel.zip) |
 
-1. 在「 → 关于本机」确认芯片，下载匹配的 ZIP。GitHub 自动生成的 **Source code** 包用于开发，不能直接当作应用打开。
+1. 在「 → 关于本机」确认芯片，使用 Safari 从上表下载匹配的原始 ZIP。GitHub 自动生成的 **Source code** 包用于开发，不能直接当作应用打开。
 2. 完整解压，把 `Codex用量.app` 拖到「应用程序」，然后双击。无需另装 Python、Node.js、Homebrew 或开发工具；首次启动会校验并离线解压随包组件。
 3. 安装并使用过 Codex 后，本工具读取这台 Mac 的本地记账；账号额度需要本机 Codex 已登录。首次历史索引可能需要等待。
 
-当前发行使用本地临时签名，**未经过 Developer ID 签名或 Apple 公证**。互联网下载后，macOS 可能要求按 [Apple 的「仍要打开」流程](https://support.apple.com/guide/mac-help/mh40616/mac)确认来源；组织管理策略可能限制运行。构建最低目标为 macOS 11；已在 Apple Silicon/macOS 26.5 实测，实体 Intel Mac 和其它系统版本尚未逐一验证。
+互联网下载后，macOS 可能要求按 [Apple 的「仍要打开」流程](https://support.apple.com/en-us/102445)确认来源。若 Intel Mac 提示“应用程序无法打开”，见 [Intel 故障排查](docs/INSTALL.md#intel-提示应用程序无法打开)。组织管理策略可能限制运行，安装助手不能替代管理员授权。
 
-发给同事时，只需发送上表匹配芯片的 **一个完整 ZIP**，也可附上同名 `.zip.sha256` 校验文件。不要发送自己的 Codex 数据文件夹或支持文件夹。应用会统计同事电脑上的记录，不携带发送者的账号、历史用量或聊天。
+构建最低目标为 macOS 11；已在 Apple Silicon/macOS 26.5 实测。一个实体 Intel/macOS 15.7.9 案例确认移除隔离属性后可启动，但这不代表所有 Intel 机型、系统版本或功能均已验收。
+
+发给同事时，优先发送本仓库或发行页链接，让接收者直接下载；需要离线传递时，发送上表匹配芯片的 **一个完整 ZIP**，也可附上同名 `.zip.sha256` 校验文件。不要发送自己的 Codex 数据文件夹或支持文件夹。应用会统计同事电脑上的记录，不携带发送者的账号、历史用量或聊天。
 
 ## 三种查看方式
 

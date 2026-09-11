@@ -8,6 +8,41 @@ enum CapsuleTheme: String, CaseIterable {
     }
 }
 
+/// Approved dark/light quota colors, interpolated across the remaining fraction.
+/// Fixed stops are shared; drawing uses the existing bounded level animation.
+enum CapsuleQuotaColors {
+    private struct Stop {
+        let fraction: CGFloat
+        let red, green, blue: CGFloat
+        init(_ fraction: CGFloat, _ hex: UInt32) {
+            self.fraction = fraction
+            red = CGFloat((hex >> 16) & 255) / 255
+            green = CGFloat((hex >> 8) & 255) / 255
+            blue = CGFloat(hex & 255) / 255
+        }
+    }
+    private static let dark = [Stop(0.05, 0xEA6565), Stop(0.10, 0xEE786E),
+        Stop(0.25, 0xF09858), Stop(0.50, 0xE9BC60), Stop(0.75, 0xA5D76D), Stop(1, 0x35DE94)]
+    private static let light = [Stop(0.05, 0xD4474F), Stop(0.10, 0xD76053),
+        Stop(0.25, 0xC97432), Stop(0.50, 0xAF811B), Stop(0.75, 0x708F30), Stop(1, 0x009E68)]
+
+    static func color(for fraction: CGFloat, theme: CapsuleTheme) -> NSColor {
+        let stops = theme == .light ? light : dark
+        let value = fraction.isFinite ? min(1, max(0, fraction)) : 0
+        var lower = stops[0]
+        for upper in stops.dropFirst() {
+            if value <= upper.fraction {
+                let t = min(1, max(0, (value - lower.fraction) / (upper.fraction - lower.fraction)))
+                return NSColor(srgbRed: lower.red + (upper.red - lower.red) * t,
+                    green: lower.green + (upper.green - lower.green) * t,
+                    blue: lower.blue + (upper.blue - lower.blue) * t, alpha: 1)
+            }
+            lower = upper
+        }
+        return NSColor(srgbRed: lower.red, green: lower.green, blue: lower.blue, alpha: 1)
+    }
+}
+
 /// Only display values live here: no hidden controls, layout tree or history rows.
 final class CapsuleState {
     var changed: (() -> Void)?
@@ -96,18 +131,18 @@ final class CapsuleSurface: NSView {
     private var tracking: NSTrackingArea?
     private var accessibleActions: [String: CapsuleAction] = [:]
     private struct Palette {
-        let background, primary, secondary, accent, ring, track, border: NSColor
-        init(_ background: UInt32, _ primary: UInt32, _ secondary: UInt32, _ accent: UInt32, _ ring: UInt32, _ track: UInt32, _ border: UInt32) {
+        let background, primary, secondary, accent, track, border: NSColor
+        init(_ background: UInt32, _ primary: UInt32, _ secondary: UInt32, _ accent: UInt32, _ track: UInt32, _ border: UInt32) {
             func color(_ hex: UInt32) -> NSColor {
                 NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
             }
             self.background = color(background); self.primary = color(primary)
             self.secondary = color(secondary); self.accent = color(accent)
-            self.ring = color(ring); self.track = color(track); self.border = color(border)
+            self.track = color(track); self.border = color(border)
         }
     }
-    private static let darkPalette = Palette(0x17191B, 0xF5F7F6, 0xADB6B2, 0x57E6B2, 0x35DE94, 0x343D38, 0x343A37)
-    private static let lightPalette = Palette(0xF5F5F2, 0x202823, 0x626C67, 0x047857, 0x009E68, 0xDCE3DD, 0xD6DDD7)
+    private static let darkPalette = Palette(0x17191B, 0xF5F7F6, 0xADB6B2, 0x57E6B2, 0x343D38, 0x343A37)
+    private static let lightPalette = Palette(0xF5F5F2, 0x202823, 0x626C67, 0x047857, 0xDCE3DD, 0xD6DDD7)
     private var palette: Palette { state.theme == .light ? Self.lightPalette : Self.darkPalette }
     private var mint: NSColor { palette.accent }
     private var ink: NSColor { palette.primary }
@@ -405,7 +440,7 @@ final class CapsuleSurface: NSView {
             let remaining = NSBezierPath()
             remaining.appendArc(withCenter: center, radius: radius, startAngle: -90, endAngle: -90 + 360 * fraction, clockwise: false)
             remaining.lineWidth = 5; remaining.lineCapStyle = .round
-            palette.ring.setStroke(); remaining.stroke()
+            CapsuleQuotaColors.color(for: fraction, theme: state.theme).setStroke(); remaining.stroke()
         }
         let name = state.quotaName == "剩余额度" ? "额度" : state.quotaName.replacingOccurrences(of: "剩余", with: "余")
         text(name, NSRect(x: center.x - 23, y: 11, width: 46, height: 13), size: 8.5, color: secondary, weight: .medium, alignment: .center)

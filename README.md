@@ -27,11 +27,11 @@ A native macOS companion for recorded Codex tokens and account quota. Local stat
 
 - **主面板**：今天、7/30/90 天或全部时间；按模型和任务筛选，查看输入、输出、缓存和调用次数；柱状图悬停显示精确数值，可搜索、排序、导出 CSV。
 - **菜单栏**：快速查看今日 Token 与剩余额度。单击展开菜单，双击打开主面板；点击其它位置关闭菜单。
-- **圆形浮窗**：76×76 的扁平圆环，5 点宽的绿色弧线表示剩余额度。悬停立即展开详情，移开立即开始收起；支持深色/浅色、置顶、拖动，以及独立的时间、模型、任务筛选。
+- **圆形浮窗**：76×76 的扁平圆环，5 点宽的弧线表示剩余额度。悬停立即展开详情，移开立即开始收起；支持深色/浅色、置顶、拖动，以及独立的时间、模型、任务筛选。
 
 <p>
-  <img src="docs/images/compact-dark-50.png" width="96" alt="深色圆形浮窗，演示数据">
-  <img src="docs/images/compact-light-50.png" width="96" alt="浅色圆形浮窗，演示数据">
+  <img src="docs/images/compact-dark-50.png" width="96" alt="深色圆形浮窗，50% 剩余额度为琥珀色，演示数据">
+  <img src="docs/images/compact-light-50.png" width="96" alt="浅色圆形浮窗，50% 剩余额度为琥珀色，演示数据">
 </p>
 <p>
   <img src="docs/images/expanded-dark.png" width="300" alt="深色详情，演示数据">
@@ -39,6 +39,10 @@ A native macOS companion for recorded Codex tokens and account quota. Local stat
 </p>
 
 以上图片由真实绘制组件生成，使用固定演示数据，不代表某个账号的额度或记录。
+
+当前源码中，收起弧线随剩余额度降低，由绿经过黄、橙平滑转为红色。整段剩余弧线使用同一种颜色；5% 及以下为警示红，0% 只保留底环，未知额度显示「—」。弧线对应上方「周余」等标签所指的账号额度，与下方筛选后的 Token 数量分别显示。深浅主题的色值和边界规则见 [额度弧线配色](docs/ARCHITECTURE.md#额度弧线配色)。
+
+这项配色属于 [尚未发布的更新](CHANGELOG.md#unreleased)，上方收起示意图展示的是更新后的源码效果；现有 v1.0.0 下载包仍使用固定绿色弧线。
 
 浮窗数字区左键打开主面板；右键或 Control-click 打开功能菜单；按住数字区移动超过 3 点时只拖动。选择菜单打开期间暂缓收起，可手动保持展开。动画遵循系统「减少动态效果」设置。
 

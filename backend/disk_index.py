@@ -103,6 +103,9 @@ class DiskUsageIndex(UsageIndex):
                     cache_write_input_tokens,hint_input,hint_output,hint_total FROM records WHERE 0;
                 CREATE INDEX IF NOT EXISTS usage_thread ON usage(thread,hint_total);
                 CREATE INDEX IF NOT EXISTS usage_task ON usage(task);
+                -- Budget windows use precise instants, independent of the UI's
+                -- daily timezone buckets. Migrate here, never in the reader.
+                CREATE INDEX IF NOT EXISTS usage_budget_time ON usage(julianday(timestamp),model,task);
                 CREATE TABLE IF NOT EXISTS daily AS SELECT task,model,date,timestamp,
                     input_tokens,output_tokens,total_tokens,cached_input_tokens,reasoning_output_tokens,
                     cache_write_input_tokens,0 AS requests FROM usage WHERE 0;

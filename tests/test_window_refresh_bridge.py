@@ -50,6 +50,10 @@ final class Worker {
 }
 final class Quota { func refresh(force: Bool) {} }
 final class Fixture {
+    func receiveBudgetAction(_ action: String, payload: Object) -> Bool { false }
+    func sendBudgetRoute() {}
+    func budgetSourceChanged() {}
+
     let capsuleState = State(), windowProcesses = Bridge(), backend = Worker(), collector = Worker(), quotaReader = Quota()
     var hostRefreshID: String?, hostRefreshDeadline: DispatchWorkItem?, pendingRefresh: Int?, refreshStarted: Date?
     var helperRefreshIDs = Set<String>(), helperRefreshQueued = false

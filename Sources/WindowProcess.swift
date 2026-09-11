@@ -48,6 +48,7 @@ final class WindowProcessCoordinator {
     private var closeCallbacks: [() -> Void] = []
     private var closeDeadline: DispatchWorkItem?
     var mainIsRunning: Bool { openPending || running.map { !$0.isTerminated } == true }
+    var mainPID: Int32? { running.flatMap { $0.isTerminated ? nil : $0.processIdentifier } }
 
     init(isMain: Bool = isMainWindowProcess, preferences: UserDefaults = usagePreferences,
          center: DistributedNotificationCenter = .default(), namespace: String = "local.codex-usage.desktop",

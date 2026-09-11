@@ -46,6 +46,11 @@ def source_files(root):
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing regular source file: {path}')
         result.append(path)
+    pytest_config = root / 'pytest.ini'
+    if pytest_config.exists() or pytest_config.is_symlink():
+        if not pytest_config.is_file() or pytest_config.is_symlink():
+            raise ValueError(f'Invalid pytest configuration: {pytest_config}')
+        result.append(pytest_config)
     for directory, suffixes in SOURCE_TREES.items():
         for path in regular_files(root / directory):
             relative = path.relative_to(root)

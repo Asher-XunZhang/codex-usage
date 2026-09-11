@@ -58,7 +58,7 @@ def main():
             '-sdk', sdk, '-target', target, '-module-cache-path', build / 'module-cache',
             '-import-objc-header', ROOT / 'Sources/UsageNative.h', source_dir / 'main.swift',
             *[ROOT / 'Sources' / name for name in ['Main.swift', 'Chart.swift', 'Capsule.swift',
-              'CapsuleHost.swift', 'StatusMenu.swift', 'Quota.swift', 'Runtime.swift', 'WindowProcess.swift', 'UsageChangeMonitor.swift', 'Termination.swift']],
+              'CapsuleHost.swift', 'StatusMenu.swift', 'Quota.swift', 'Runtime.swift', 'WindowProcess.swift', 'UsageChangeMonitor.swift', 'Termination.swift', 'BudgetCore.swift', 'ControlFeedback.swift', 'BudgetUI.swift', 'BudgetHost.swift']],
             native, '-o', stage / 'CodexUsage.bin')
         run('xcrun', 'swiftc', '-swift-version', '5', '-Osize', '-sdk', sdk, '-target', target,
             ROOT / 'Sources/QuotaHelper.swift', '-o', stage / 'CodexQuota.bin')

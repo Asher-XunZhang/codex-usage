@@ -107,6 +107,9 @@ final class FakeCoordinator {
 }
 ''' + termination + r'''
 final class Fixture: NSObject {
+    func stopBudgetClients() {}
+    var savedMainFrames = 0
+    func saveMainWindowFrame() { savedMainFrames += 1 }
     var statusItem: NSStatusItem?, floating: NSWindow? = NSWindow(), window: NSWindow!
     var dashboard: NSObject?, capsule: NSObject? = NSObject()
     var mainWindowOpen = false, terminating = false, compactMode = true, trayOnly = false
@@ -236,6 +239,7 @@ case "quit":
     check(host.applicationShouldTerminate(NSApp) == .terminateNow, "Resumed Quit is idempotent")
     let helper = fresh(helper: true)
     check(helper.applicationShouldTerminate(NSApp) == .terminateCancel, "Helper close waits for its Python worker")
+    check(helper.savedMainFrames == 1 && host.savedMainFrames == 0, "Only Main persists the shared window frame at close")
     check(helper.backend.stopCount == 1 && helper.collector.stopCount == 0 && helper.quotaReader.stopCount == 0 && helper.windowProcesses.closes == 0, "Helper cleanup cannot stop host processes")
     check(preferences.string(forKey: "filterDays") == "7" && preferences.string(forKey: "filterModel") == "model-a", "Helper saves independent Main filters")
     helper.backend.finishStops(); drain(); check(NSApp.terminations == 1, "Main exits after its worker is gone")

@@ -120,13 +120,13 @@ final class MetricCard: NSView {
 
 /// Owns exactly one worker. All callbacks and mutable state stay on the main queue.
 final class DashboardUI {
-    let intervalPicker = NSPopUpButton()
+    let intervalPicker = FeedbackPopUpButton()
     let status = label("正在准备本机统计…", 12, color: .secondaryLabelColor)
     let coverage = label("仅统计这台 Mac 的已记录用量 · 日界线 UTC+08:00", 11, color: .secondaryLabelColor)
-    let period = NSSegmentedControl(labels: ["今天", "7 天", "30 天", "90 天", "全部"], trackingMode: .selectOne, target: nil, action: nil)
-    let grouping = NSSegmentedControl(labels: ["按模型", "按任务"], trackingMode: .selectOne, target: nil, action: nil)
-    let models = NSPopUpButton()
-    let tasks = NSPopUpButton()
+    let period = FeedbackSegmentedControl(labels: ["今天", "7 天", "30 天", "90 天", "全部"], trackingMode: .selectOne, target: nil, action: nil)
+    let grouping = FeedbackSegmentedControl(labels: ["按模型", "按任务"], trackingMode: .selectOne, target: nil, action: nil)
+    let models = FeedbackPopUpButton()
+    let tasks = FeedbackPopUpButton()
     let search = NSSearchField()
     let table = NSTableView()
     let trend = TrendView()
@@ -150,6 +150,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var hostQuotaDetail = "正在读取账号额度…"
     var hostQuotaResetLabel = "重置卡数量未知"
     var applyingHostState = false
+    var budgetCoordinator: BudgetCoordinator?
+    var budgetState: Object = [:]
+    var budgetPage: BudgetPage?
+    var usagePageView: NSView?
+    var mainPageContainer: MainPageContainer?
+    var pagePicker: NSSegmentedControl?
+    var mainPage = "usage"
+    var pendingBudgetRoute: Object?
+    var lastBudgetRouteID: String?
+    var budgetPacketID: String?
+    var budgetPackets: [Int: Data] = [:]
+    var budgetPublishSequence = 0
+    var budgetPacketSequence = 0
+    var budgetPacketCount = 0
+    var budgetPacketComplete = false
+    var budgetMainViewing: String?
+    var budgetMainVisible = false
+    let budgetModelChoices = FloatingChoicesReader()
+    let budgetTaskChoices = FloatingChoicesReader()
     var publishedUsageStamp: String?
     lazy var windowProcesses = WindowProcessCoordinator()
     let nativeSummary = NativeSummaryReader()
@@ -293,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             handleMainRequest()
         } else {
             buildStatusItem()
+            startBudgets()
             quotaReader.changed = { [weak self] snapshot in self?.renderQuota(snapshot) }
             quotaReader.start()
             let initialMode = usagePreferences.string(forKey: "displayMode") ?? "main"
@@ -308,6 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         windowProcesses.mainClosed = { [weak self] in
             guard let self = self, !isMainWindowProcess, !self.terminating else { return }
             self.mainWindowOpen = false
+            self.budgetMainVisible = false; self.budgetMainViewing = nil
+            self.pendingBudgetRoute = nil
             self.persistHostWindowMode()
             if let id = self.hostRefreshID { self.completeHostRefresh(id: id, success: false, message: "主面板已关闭，已恢复后台采集") }
             self.compactDirty = true; self.compactDirtyGeneration += 1
@@ -359,9 +381,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             "theme": capsuleState.theme.rawValue, "refreshSeconds": autoSeconds,
             "quotaDetail": quota.detail, "quotaResetLabel": quota.resetLabel
         ])
+        publishBudgetState()
     }
     func receiveHostState(_ state: Object) {
         guard isMainWindowProcess, !terminating else { return }
+        if let budgets = state["budgets"] as? Object { receiveBudgetState(budgets) }
         applyingHostState = true; defer { applyingHostState = false }
         hostFloatingVisible = state["floatingVisible"] as? Bool ?? hostFloatingVisible
         floatingButton?.title = hostFloatingVisible ? "隐藏浮窗" : "显示浮窗"
@@ -374,6 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func receiveWindowAction(_ action: String, payload: Object) {
         guard !terminating else { return }
+        if receiveBudgetAction(action, payload: payload) { return }
         if isMainWindowProcess {
             if action == "close" { hideDashboard() }
             else if action == "refresh" {
@@ -394,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if hostRefreshID == nil { finishRefreshing() }
             collector.stop { [weak self] in
                 guard let self = self, !self.terminating else { return }
-                self.publishHostState(); self.compactSelectionQueued = true; self.fetchCompact(manual: false)
+                self.publishHostState(); self.sendBudgetRoute(); self.compactSelectionQueued = true; self.fetchCompact(manual: false)
                 if let id = self.hostRefreshID {
                     self.windowProcesses.sendToMain("refresh", payload: ["requestID": id])
                 }
@@ -419,6 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                     message: payload["message"] as? String ?? "刷新已结束")
             }
         case "homeChanged":
+            budgetSourceChanged()
             stopCompactMonitoring(); compactMode = false; enterCompactMode()
         case "quit": quitApplication()
         default: break
@@ -526,14 +552,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usedDashboard = true
         dashboard = DashboardUI()
         dashboard?.status.stringValue = statusText
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 840), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Codex 用量"
         window.subtitle = "本机统计 · \(nativeArchitecture)"
-        window.minSize = NSSize(width: 1040, height: 740)
+        window.contentMinSize = NSSize(width: 1040, height: 718)
         window.center()
-        window.setFrameAutosaveName("CodexUsageMain")
         window.isReleasedWhenClosed = false
         window.delegate = self
+        restoreMainWindowFrame()
         let root = window.contentView!
         let title = stack([label("Codex 用量", 27, .bold), spacer(), status])
         status.setAccessibilityIdentifier("connectionStatus")
@@ -541,9 +567,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         intervalPicker.setAccessibilityLabel("自动刷新间隔")
         intervalPicker.widthAnchor.constraint(equalToConstant: 130).isActive = true
         rebuildIntervalPicker()
-        floatingButton = NSButton(title: (isMainWindowProcess ? hostFloatingVisible : floating?.isVisible == true) ? "隐藏浮窗" : "显示浮窗", target: self, action: #selector(toggleFloating))
+        floatingButton = FeedbackButton(title: (isMainWindowProcess ? hostFloatingVisible : floating?.isVisible == true) ? "隐藏浮窗" : "显示浮窗", target: self, action: #selector(toggleFloating))
         floatingButton?.bezelStyle = .rounded
-        let trayButton = NSButton(title: "仅状态栏", target: self, action: #selector(onlyStatusBar)); trayButton.bezelStyle = .rounded
+        let trayButton = FeedbackButton(title: "仅状态栏", target: self, action: #selector(onlyStatusBar)); trayButton.bezelStyle = .rounded
         let subtitle = stack([label("看清每次思考的用量。", 13, color: .secondaryLabelColor), spacer(), label("自动刷新", 11, color: .secondaryLabelColor), intervalPicker, floatingButton, trayButton])
         period.selectedSegment = ["1", "7", "30", "90", "all"].firstIndex(of: days) ?? 2; period.target = self; period.action = #selector(filterChanged)
         period.setAccessibilityLabel("时间范围")
@@ -551,9 +577,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         tasks.addItem(withTitle: "全部任务"); tasks.target = self; tasks.action = #selector(filterChanged); tasks.setAccessibilityLabel("任务筛选")
         models.widthAnchor.constraint(equalToConstant: 170).isActive = true
         tasks.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        refreshButton = NSButton(title: "刷新", target: self, action: #selector(manualRefresh))
+        refreshButton = FeedbackButton(title: "刷新", target: self, action: #selector(manualRefresh))
         refreshButton?.bezelStyle = .rounded
-        exportButton = NSButton(title: "导出 CSV…", target: self, action: #selector(exportCSV)); exportButton?.bezelStyle = .rounded
+        exportButton = FeedbackButton(title: "导出 CSV…", target: self, action: #selector(exportCSV)); exportButton?.bezelStyle = .rounded
         exportButton?.isEnabled = false
         let filters = stack([period, models, tasks, spacer(), refreshButton, exportButton], spacing: 8)
         let cards = stack([totalCard, inputCard, outputCard, cacheCard, callsCard])
@@ -591,7 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         scroll.borderType = .noBorder; scroll.autohidesScrollers = true
         scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
-        let details = NSButton(title: "统计说明", target: self, action: #selector(showCoverage)); details.bezelStyle = .rounded
+        let details = FeedbackButton(title: "统计说明", target: self, action: #selector(showCoverage)); details.bezelStyle = .rounded
         let footer = stack([coverage, spacer(), details])
         let quotaRow = stack([dashboard!.quotaText, spacer(), dashboard!.quotaCards], spacing: 12)
         quotaRow.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -602,12 +628,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             dashboard?.quotaCards.stringValue = hostQuotaResetLabel
         } else { renderQuota(quotaReader.snapshot) }
         let content = stack([title, subtitle, quotaRow, filters, cards, chartPanel, detailHeader, scroll, footer], vertical: true, spacing: 12)
-        content.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: root.topAnchor, constant: 24), content.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
-            content.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 26), content.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -26)
-        ])
         for v in [title, subtitle, quotaRow, filters, cards, chartPanel, detailHeader, scroll, footer] { v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true }
+        installBudgetNavigation(root: root, usage: content)
         window.makeKeyAndOrderFront(nil)
     }
     func renderQuota(_ snapshot: QuotaSnapshot) {
@@ -620,6 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         capsuleState.quotaStale = snapshot.stale || snapshot.error != nil
         capsuleState.quotaFraction = snapshot.capsuleWindow.map { $0.remaining / 100 }
         capsuleState.quotaDetail = snapshot.compact
+        budgetCoordinator?.updateQuota(snapshot)
         updateStatusTitle()
         publishHostState()
     }
@@ -646,7 +669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         }
     }
-    var mainVisible: Bool { isMainWindowProcess && window?.isVisible == true && window?.isMiniaturized != true && !NSApp.isHidden }
+    var mainVisible: Bool { isMainWindowProcess && mainPage == "usage" && window?.isVisible == true && window?.isMiniaturized != true && !NSApp.isHidden }
     func refreshVisibleData() { if mainVisible { loadUsage() } else { loadCompact() } }
     func poll(force: Bool = false) {
         guard !compactMode, !terminating, !restarting else { return }
@@ -1007,6 +1030,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             capsuleState.pinned = pinned
             surface.action = { [weak self] action in
                 guard let self = self else { return }
+                if self.floatingBudgetAction(action) { return }
                 switch action {
                 case "refresh": self.manualRefresh()
                 case "details": self.toggleFloatKeepsExpanded()
@@ -1266,6 +1290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 let summary = self.todaySnapshot["summary"] as? Object ?? [:]
                 self.updateStatusTitle()
                 self.statusItem?.button?.toolTip = "今日 \(exact(summary["total_tokens"])) tokens · \(self.intervalDescription) · 双击打开主面板"
+                self.refreshBudgets(manual: manual)
                 self.loadFloating()
                 if manual { self.refreshPresented(self.todaySnapshot) }
                 self.trimIdleMemory()
@@ -1377,6 +1402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         for text in [quotaReader.snapshot.detail] {
             let row = NSMenuItem(title: text, action: nil, keyEquivalent: ""); row.isEnabled = false; menu.addItem(row)
         }
+        appendBudgetMenu(menu)
         menu.addItem(.separator())
         for (title, action) in [("立即刷新", #selector(manualRefresh)), ("显示主面板", #selector(showDashboard)), ("显示 / 隐藏浮窗", #selector(toggleFloating)), ("仅浮窗", #selector(onlyFloating)), ("仅状态栏", #selector(onlyStatusBar))] {
             let row = NSMenuItem(title: title, action: action, keyEquivalent: ""); row.target = self; menu.addItem(row)
@@ -1420,6 +1446,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 }
                 self.todaySnapshot = json
                 self.compactStamp = (json["meta"] as? Object)?["generated_at"] as? String
+                if self.compactStamp != self.publishedUsageStamp {
+                    self.publishedUsageStamp = self.compactStamp; self.sendHost("dataChanged")
+                }
                 let summary = json["summary"] as? Object ?? [:]
                 self.updateStatusTitle()
                 self.statusItem?.button?.toolTip = "今日 \(exact(summary["total_tokens"])) tokens · \(self.intervalDescription)"
@@ -1716,8 +1745,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let termination = AsyncTermination()
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         return termination.request(sender) { finished in
+        stopBudgetClients()
         floatingChoices.cancel()
         if isMainWindowProcess {
+            saveMainWindowFrame()
             for (key, value) in [("filterDays", days), ("filterModel", model), ("filterTask", task), ("filterGroup", group)] { usagePreferences.set(value, forKey: key) }
             usagePreferences.synchronize()
         } else { mainWindowOpen = false; persistHostWindowMode() }

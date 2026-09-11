@@ -52,8 +52,26 @@ final class CapsuleState {
     var quotaName = "剩余额度" { didSet { changed?() } }
     var quotaStale = false { didSet { changed?() } }
     var theme: CapsuleTheme = .dark { didSet { changed?() } }
+    var budgetMode = false { didSet { changed?() } }
+    var budgetID = "" { didSet { changed?() } }
+    var budgetOptions: [(String, String)] = []
+    var budgetName = "选择预算" { didSet { changed?() } }
+    var budgetFraction: Double? { didSet { changed?() } }
+    var budgetUsed = "—" { didSet { changed?() } }
+    var budgetRemaining = "—" { didSet { changed?() } }
+    var budgetAmount = "—" { didSet { changed?() } }
+    var budgetAmountLabel = "限额" { didSet { changed?() } }
+    var budgetStatus = "请选择预算" { didSet { changed?() } }
+    var budgetPeriod = "" { didSet { changed?() } }
+    var budgetScope = "" { didSet { changed?() } }
+    var budgetStale = true { didSet { changed?() } }
+    var budgetCaption = "预算已用" { didSet { changed?() } }
+    var displayName: String { budgetMode ? budgetName : quotaName }
+    var displayTotal: String { budgetMode ? budgetUsed : total }
+    var displayScope: String { budgetMode ? budgetCaption : scopeTitle }
+    var displayStale: Bool { budgetMode ? budgetStale : quotaStale }
     var normalizedQuota: CGFloat? {
-        guard let value = quotaFraction, value.isFinite else { return nil }
+        guard let value = budgetMode ? budgetFraction : quotaFraction, value.isFinite else { return nil }
         return CGFloat(min(1, max(0, value)))
     }
     var total = "—" { didSet { changed?() } }
@@ -115,6 +133,7 @@ final class CapsuleSurface: NSView {
     var expansion: CGFloat = 0 {
         didSet {
             if expansion > 0 { finishLiquidAnimation() }
+            if expansion <= 0.99 { setButtonFeedback(nil) }
             if expansion == 0, oldValue > 0 {
                 // Hidden detail actions need no retained labels/closures. Keep the
                 // compact action stable for accessibility focus across transitions.
@@ -143,6 +162,8 @@ final class CapsuleSurface: NSView {
     }
     private static let darkPalette = Palette(0x17191B, 0xF5F7F6, 0xADB6B2, 0x57E6B2, 0x343D38, 0x343A37)
     private static let lightPalette = Palette(0xF5F5F2, 0x202823, 0x626C67, 0x047857, 0xDCE3DD, 0xD6DDD7)
+    private static let darkButtonGlow = NSColor(srgbRed: 57.0 / 255, green: 233.0 / 255, blue: 183.0 / 255, alpha: 1)
+    private static let lightButtonGlow = NSColor(srgbRed: 8.0 / 255, green: 172.0 / 255, blue: 123.0 / 255, alpha: 1)
     private var palette: Palette { state.theme == .light ? Self.lightPalette : Self.darkPalette }
     private var mint: NSColor { palette.accent }
     private var ink: NSColor { palette.primary }
@@ -163,6 +184,10 @@ final class CapsuleSurface: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     private func stateChanged() {
+        if let name = feedbackButton,
+           !isActionEnabled(name) || !regions().contains(where: { $0.0 == name }) {
+            setButtonFeedback(nil)
+        }
         needsDisplay = true
         appearanceChanged?()
         let next = state.normalizedQuota
@@ -210,6 +235,10 @@ final class CapsuleSurface: NSView {
         var dragged = false
     }
     private var press: Press?
+    // Pointer feedback shares the existing gesture state and drawing surface.
+    // Only a changed target/style invalidates pixels; no idle animation or timer.
+    private var feedbackButton: String?
+    private var feedbackPressed = false
     private var compactHotspot: NSRect?
     private var activeMenu: NSMenu?
     private var menuGeneration = 0
@@ -233,11 +262,13 @@ final class CapsuleSurface: NSView {
         let point = screenPoint(event), inside = containsScreenPoint(point)
         if expansion == 0, inside { compactHotspot = window?.convertToScreen(convert(bounds, to: nil)) }
         else if !inHotspot(point) { compactHotspot = nil }
+        setButtonFeedback(feedbackAction(point))
         hover?(inside)
     }
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
     override func mouseExited(with event: NSEvent) {
+        setButtonFeedback(nil)
         guard !state.interactionActive else { return }
         if !inHotspot(screenPoint(event)) { compactHotspot = nil }
         hover?(false)
@@ -248,7 +279,24 @@ final class CapsuleSurface: NSView {
         // stationary pointer, including when screen-edge clamping moves the view.
         if inHotspot(point) { return "details" }
         let local = convert(window.convertPoint(fromScreen: point), from: nil)
-        return regions().first { $0.0 != "context" && $0.2.contains(local) }?.0
+        return regions().first { $0.0 != "context" && $0.0 != "budgetScope" && $0.2.contains(local) }?.0
+    }
+    private func isActionEnabled(_ name: String) -> Bool {
+        name != "budgetScope" && (name != "refresh" || state.enabled)
+    }
+    private func feedbackAction(_ point: NSPoint) -> String? {
+        guard expansion > 0.99, !state.menuPresented,
+              let name = hitAction(point), name != "details", isActionEnabled(name) else { return nil }
+        return name
+    }
+    private func setButtonFeedback(_ name: String?, pressed: Bool = false) {
+        let pressed = name != nil && pressed
+        guard feedbackButton != name || feedbackPressed != pressed else { return }
+        let previous = feedbackButton
+        feedbackButton = name; feedbackPressed = pressed
+        for (key, _, rect) in regions() where key == previous || key == name {
+            setNeedsDisplay(buttonGlowBounds(buttonOutline(key, rect)))
+        }
     }
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
@@ -257,6 +305,7 @@ final class CapsuleSurface: NSView {
         // A double click must not dispatch a second primary action.
         guard name != "details" || event.clickCount < 2 else { return }
         press = Press(name: name, start: screenPoint(event), origin: window.frame.origin, hotspot: compactHotspot)
+        setButtonFeedback(feedbackAction(screenPoint(event)), pressed: true)
         state.pointerPressed = true; interactionChanged?(true)
     }
     override func mouseDragged(with event: NSEvent) {
@@ -264,6 +313,8 @@ final class CapsuleSurface: NSView {
         let point = screenPoint(event), dx = point.x - value.start.x, dy = point.y - value.start.y
         if hypot(dx, dy) >= 3 { value.dragged = true }
         press = value
+        let target = !value.dragged && feedbackAction(point) == value.name ? value.name : nil
+        setButtonFeedback(target, pressed: true)
         if value.dragged, value.name == "details" {
             window?.setFrameOrigin(NSPoint(x: value.origin.x + dx, y: value.origin.y + dy))
             compactHotspot = value.hotspot?.offsetBy(dx: dx, dy: dy)
@@ -273,7 +324,8 @@ final class CapsuleSurface: NSView {
         guard let value = press else { return }
         let point = screenPoint(event)
         let moved = value.dragged || hypot(point.x - value.start.x, point.y - value.start.y) >= 3
-        let selected = !moved && hitAction(point) == value.name ? value.name : nil
+        let selected = !moved && hitAction(point) == value.name && isActionEnabled(value.name) ? value.name : nil
+        setButtonFeedback(!moved ? feedbackAction(point) : nil)
         press = nil; state.pointerPressed = false; interactionChanged?(false)
         if let name = selected { performAction(name == "details" ? "main" : name) }
     }
@@ -282,6 +334,7 @@ final class CapsuleSurface: NSView {
         presentContextMenu(at: screenPoint(event))
     }
     func cancelInteraction() {
+        setButtonFeedback(nil)
         menuGeneration += 1
         activeMenu?.cancelTracking(); activeMenu = nil; press = nil; compactHotspot = nil
         let active = state.interactionActive
@@ -289,7 +342,14 @@ final class CapsuleSurface: NSView {
         if active { interactionChanged?(false) }
     }
     private func performAction(_ name: String) {
-        if name == "interval" { presentIntervalMenu() }
+        guard isActionEnabled(name) else { return }
+        if name == "content" {
+            presentMenu([("usage", "用量统计"), ("budget", "预算提醒")], selected: state.budgetMode ? "budget" : "usage", trigger: NSRect(x: 16, y: 78, width: 70, height: 24), action: "content")
+        }
+        else if name == "budget" {
+            presentMenu(state.budgetOptions + [("", ""), ("manage", "管理预算…")], selected: state.budgetID, trigger: NSRect(x: 94, y: 78, width: 134, height: 24), action: "budget")
+        }
+        else if name == "interval" { presentIntervalMenu() }
         else if name == "period" { presentPeriodMenu() }
         else if name == "model" || name == "task" { presentChoiceMenu(name) }
         else if name == "context" { presentContextMenu(at: window?.frame.origin ?? NSEvent.mouseLocation) }
@@ -306,15 +366,17 @@ final class CapsuleSurface: NSView {
     private func presentPeriodMenu() {
         presentMenu([("1", "今天"), ("7", "最近 7 天"), ("30", "最近 30 天"), ("90", "最近 90 天"), ("all", "全部时间")],
                     selected: state.scope == 0 ? "1" : state.rangeDays,
-                    trigger: NSRect(x: 16, y: 78, width: 212, height: 24), action: "period")
+                    trigger: NSRect(x: 94, y: 78, width: 134, height: 24), action: "period")
     }
     private func beginMenu() -> Int? {
         guard !state.interactionActive, window != nil else { return nil }
+        setButtonFeedback(nil)
         menuGeneration += 1; state.menuPresented = true; interactionChanged?(true)
         return menuGeneration
     }
     private func finishMenu(_ generation: Int) -> Bool {
         guard generation == menuGeneration else { return false }
+        setButtonFeedback(nil)
         activeMenu = nil; state.menuPresented = false
         if let changed = interactionChanged { changed(false) } else { hover?(false) }
         return true
@@ -360,7 +422,8 @@ final class CapsuleSurface: NSView {
     }
     private func presentContextMenu(at point: NSPoint) {
         guard let generation = beginMenu() else { return }
-        trackMenu([("main", "打开主面板"), ("refresh", "立即刷新"), ("", ""),
+        let budgetActions: [(String, String)] = state.budgetMode ? [("budgetEdit", "查看 / 编辑预算…"), ("budgetPause", "暂停提醒 30 分钟"), ("", "")] : []
+        trackMenu(budgetActions + [("main", "打开主面板"), ("refresh", "立即刷新"), ("", ""),
                    ("details", state.keepsExpanded ? "解除保持展开" : "保持展开"),
                 ("pin", state.pinned ? "取消置顶" : "置顶浮窗"),
                    ("themeDark", "深色主题"), ("themeLight", "浅色主题"), ("", ""),
@@ -372,9 +435,10 @@ final class CapsuleSurface: NSView {
         if expansion > 0.99 {
             result += [
                 ("refresh", state.enabled ? "刷新胶囊" : "正在刷新", NSRect(x: 16, y: 53, width: 26, height: 24)),
-                ("period", "浮窗统计范围，" + state.scopeTitle, NSRect(x: 16, y: 78, width: 212, height: 24)),
-                ("model", "浮窗模型，" + state.modelTitle, NSRect(x: 16, y: 110, width: bounds.width - 32, height: 24)),
-                ("task", "浮窗任务，" + state.taskTitle, NSRect(x: 16, y: 142, width: bounds.width - 32, height: 24)),
+                ("content", "浮窗内容，" + (state.budgetMode ? "预算提醒" : "用量统计"), NSRect(x: 16, y: 78, width: 70, height: 24)),
+                (state.budgetMode ? "budget" : "period", state.budgetMode ? "选择预算，" + state.budgetName : "浮窗统计范围，" + state.scopeTitle, NSRect(x: 94, y: 78, width: 134, height: 24)),
+                (state.budgetMode ? "budgetEdit" : "model", state.budgetMode ? "编辑预算范围" : "浮窗模型，" + state.modelTitle, NSRect(x: 16, y: 110, width: bounds.width - 32, height: 24)),
+                (state.budgetMode ? "budgetScope" : "task", state.budgetMode ? "预算范围，只读" : "浮窗任务，" + state.taskTitle, NSRect(x: 16, y: 142, width: bounds.width - 32, height: 24)),
                 ("pin", state.pinned ? "取消置顶" : "置顶胶囊", NSRect(x: bounds.width - 60, y: 78, width: 44, height: 24)),
                 ("themeDark", "深色主题" + (state.theme == .dark ? "，已选中" : ""), NSRect(x: bounds.width - 162, y: 300, width: 72, height: 24)),
                 ("themeLight", "浅色主题" + (state.theme == .light ? "，已选中" : ""), NSRect(x: bounds.width - 90, y: 300, width: 74, height: 24)),
@@ -387,7 +451,8 @@ final class CapsuleSurface: NSView {
         return result
     }
     override func accessibilityValue() -> Any? {
-        expansion > 0.99 ? "\(state.exact)，\(state.context)，输入 \(state.input)，输出 \(state.output)，\(state.cache)，\(state.status)，\(state.quotaDetail)" : "\(state.scopeTitle)总 Token \(state.total)，\(state.quotaCompact)"
+        if state.budgetMode { return "预算 \(state.budgetName)，剩余 \(state.budgetRemaining)，已用 \(state.budgetUsed)，\(state.budgetStatus)，\(state.budgetScope)" }
+        return expansion > 0.99 ? "\(state.exact)，\(state.context)，输入 \(state.input)，输出 \(state.output)，\(state.cache)，\(state.status)，\(state.quotaDetail)" : "\(state.scopeTitle)总 Token \(state.total)，\(state.quotaCompact)"
     }
     override func accessibilityChildren() -> [Any]? {
         guard let window = window else { return [] }
@@ -398,10 +463,10 @@ final class CapsuleSurface: NSView {
             element.setAccessibilityLabel(label)
             element.setAccessibilityParent(self)
             element.setAccessibilityFrame(window.convertToScreen(convert(frame, to: nil)))
-            element.setAccessibilityEnabled(name != "refresh" || state.enabled)
+            element.setAccessibilityEnabled(name != "budgetScope" && (name != "refresh" || state.enabled))
             element.perform = { [weak self] in
-                guard let self = self, name != "refresh" || self.state.enabled else { return }
-                if ["period", "model", "task", "interval", "context"].contains(name) {
+                guard let self = self, name != "budgetScope", name != "refresh" || self.state.enabled else { return }
+                if ["content", "budget", "period", "model", "task", "interval", "context"].contains(name) {
                     DispatchQueue.main.async { [weak self] in self?.performAction(name) }
                 } else { self.performAction(name) }
             }
@@ -423,6 +488,82 @@ final class CapsuleSurface: NSView {
     private func fill(_ rect: NSRect, radius: CGFloat, color: NSColor) {
         color.setFill(); NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
     }
+    private func buttonGlowBlur(_ rect: NSRect) -> CGFloat { 25 * min(1, rect.height / 40) }
+    private func isThemeButton(_ name: String) -> Bool { name == "themeDark" || name == "themeLight" }
+    private func buttonOutline(_ name: String, _ rect: NSRect) -> NSRect {
+        // Theme choices share one segmented-control outline while retaining
+        // separate pointer/accessibility actions and the selected inner segment.
+        isThemeButton(name) ? NSRect(x: bounds.width - 162, y: 300, width: 146, height: 24) : rect
+    }
+    private func buttonGlowBounds(_ rect: NSRect) -> NSRect {
+        // Always invalidate the wider hover footprint, including when press
+        // tightens the glow. The same bound clips drawing, so exit leaves no rim.
+        let padding = ceil(buttonGlowBlur(rect) * 2) + 2
+        return rect.insetBy(dx: -padding, dy: -padding).intersection(bounds)
+    }
+    private func drawButtonOuterGlow() {
+        guard expansion > 0.99, let name = feedbackButton, isActionEnabled(name), !state.menuPresented,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let buttons = regions()
+        guard let button = buttons.first(where: { $0.0 == name })?.2 else { return }
+        let rect = buttonOutline(name, button)
+        let light = state.theme == .light
+        let color = light ? Self.lightButtonGlow : Self.darkButtonGlow
+        let strength: CGFloat = light ? 0.59 : 0.79
+        let blur = buttonGlowBlur(rect) * (feedbackPressed ? 0.70 : 1)
+        let source = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        let glowBounds = buttonGlowBounds(rect)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: glowBounds).addClip()
+        let exterior = NSBezierPath(rect: bounds)
+        exterior.windingRule = .evenOdd
+        exterior.append(source)
+        if let header = buttons.first(where: { $0.0 == "details" })?.2 { exterior.appendRect(header) }
+        exterior.addClip()
+        // Composite only the glow into a short-lived drawing layer. Neighbors
+        // must not cut rectangular holes in it or cover it with their own fill.
+        context.beginTransparencyLayer(in: glowBounds, auxiliaryInfo: nil)
+        for (radius, alpha) in [(blur, strength), (blur * 0.30, strength * 0.65)] {
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = color.withAlphaComponent(alpha)
+            shadow.shadowBlurRadius = radius; shadow.shadowOffset = .zero; shadow.set()
+            color.setFill(); source.fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        context.saveGState()
+        context.setBlendMode(.destinationOut)
+        for (key, _, frame) in buttons where key != name && key != "context" && key != "details" && key != "themeLight" {
+            if isThemeButton(name) && isThemeButton(key) { continue }
+            let neighbor = buttonOutline(key, frame)
+            if neighbor.intersects(glowBounds) { fadeButtonGlowInside(neighbor) }
+        }
+        context.restoreGState()
+        context.endTransparencyLayer()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+    private func fadeButtonGlowInside(_ rect: NSRect) {
+        // A continuous falloff lets light cross a neighbor's edge, then protects
+        // its text and core within six points. Incremental alpha produces the
+        // intended smoothstep mask when these nested fills are composited.
+        let width = min(CGFloat(6), rect.height / 4)
+        let steps = 16
+        var previous: CGFloat = 0
+        for step in 1...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            let coverage = t * t * (3 - 2 * t)
+            let alpha = (coverage - previous) / (1 - previous)
+            let inset = width * t
+            fill(rect.insetBy(dx: inset, dy: inset), radius: max(0, 8 - inset), color: NSColor.black.withAlphaComponent(alpha))
+            previous = coverage
+        }
+    }
+    private func buttonBackground(_ name: String, _ rect: NSRect, base: NSColor = .clear) {
+        if base.alphaComponent > 0 { fill(rect, radius: 8, color: base) }
+        guard expansion > 0.99, feedbackButton == name, feedbackPressed, isActionEnabled(name), !state.menuPresented else { return }
+        let light = state.theme == .light
+        fill(rect, radius: 8, color: mint.withAlphaComponent(light ? 0.19 : 0.25))
+    }
     private func liquidPath(edge: CGFloat, height: CGFloat, bend: CGFloat) -> NSBezierPath {
         let path = NSBezierPath()
         path.move(to: NSPoint(x: 0, y: 0)); path.line(to: NSPoint(x: edge, y: 0))
@@ -442,10 +583,10 @@ final class CapsuleSurface: NSView {
             remaining.lineWidth = 5; remaining.lineCapStyle = .round
             CapsuleQuotaColors.color(for: fraction, theme: state.theme).setStroke(); remaining.stroke()
         }
-        let name = state.quotaName == "剩余额度" ? "额度" : state.quotaName.replacingOccurrences(of: "剩余", with: "余")
+        let name = state.displayName == "剩余额度" ? "额度" : state.displayName.replacingOccurrences(of: "剩余", with: "余")
         text(name, NSRect(x: center.x - 23, y: 11, width: 46, height: 13), size: 8.5, color: secondary, weight: .medium, alignment: .center)
         let digits = state.normalizedQuota.map { "\(Int(($0 * 100 + 1e-9).rounded(.down)))" } ?? "—"
-        let unit = (state.normalizedQuota == nil ? "" : "%") + (state.quotaStale ? "*" : "")
+        let unit = (state.normalizedQuota == nil ? "" : "%") + (state.displayStale ? "*" : "")
         let valueFont = font(size: 18, weight: .medium, mono: true, rounded: true)
         let unitFont = font(size: 10, weight: .medium, mono: false, rounded: true)
         let valueWidth = (digits as NSString).size(withAttributes: [.font: valueFont]).width
@@ -454,10 +595,10 @@ final class CapsuleSurface: NSView {
         let baseline: CGFloat = 40
         text(digits, NSRect(x: x, y: baseline - valueFont.ascender, width: valueWidth + 1, height: 27), size: 18, color: ink, weight: .medium, mono: true, rounded: true)
         text(unit, NSRect(x: x + valueWidth + 1, y: baseline - unitFont.ascender, width: unitWidth + 1, height: 17), size: 10, color: ink, weight: .medium, rounded: true)
-        let tokenWidth = (state.total as NSString).size(withAttributes: [.font: font(size: 10, weight: .medium, mono: true, rounded: true)]).width
+        let tokenWidth = (state.displayTotal as NSString).size(withAttributes: [.font: font(size: 10, weight: .medium, mono: true, rounded: true)]).width
         let tokenSize = max(8, min(10, 480 / max(1, tokenWidth)))
-        text(state.total, NSRect(x: center.x - 25, y: 43, width: 50, height: 15), size: tokenSize, color: ink, weight: .medium, mono: true, rounded: true, truncation: .byTruncatingMiddle, alignment: .center)
-        text(state.scopeTitle, NSRect(x: center.x - 20, y: 57, width: 40, height: 13), size: 8.5, color: secondary, weight: .medium, alignment: .center)
+        text(state.displayTotal, NSRect(x: center.x - 25, y: 43, width: 50, height: 15), size: tokenSize, color: ink, weight: .medium, mono: true, rounded: true, truncation: .byTruncatingMiddle, alignment: .center)
+        text(state.displayScope, NSRect(x: center.x - 20, y: 57, width: 40, height: 13), size: 8.5, color: secondary, weight: .medium, alignment: .center)
     }
     private func drawBattery() {
         let light = state.theme == .light
@@ -506,19 +647,19 @@ final class CapsuleSurface: NSView {
         let percent = state.normalizedQuota.map { "\(Int(($0 * 100 + 1e-9).rounded(.down)))" }
         let quotaDigits = percent ?? "—", digitWidth = width(quotaDigits, valueSize, mono: true)
         drawHeader(quotaDigits, x: inset, width: digitWidth + 1, size: valueSize, color: ink, mono: true)
-        let unit = (percent == nil ? "" : "%") + (state.quotaStale ? "*" : "")
+        let unit = (percent == nil ? "" : "%") + (state.displayStale ? "*" : "")
         let unitWidth = width(unit, unitSize)
         drawHeader(unit, x: inset + digitWidth + 1, width: unitWidth + 1, size: unitSize, color: ink.withAlphaComponent(0.86))
         let quotaLabelX = inset + digitWidth + unitWidth + 7
-        let shortName = state.quotaName == "剩余额度" ? "额度" : state.quotaName.replacingOccurrences(of: "剩余", with: "余")
-        let hasUnit = state.total.last.map { "KMB".contains($0) } ?? false
-        let tokenDigits = hasUnit ? String(state.total.dropLast()) : state.total
-        let tokenUnit = hasUnit ? String(state.total.suffix(1)) : ""
+        let shortName = state.displayName == "剩余额度" ? "额度" : state.displayName.replacingOccurrences(of: "剩余", with: "余")
+        let hasUnit = state.displayTotal.last.map { "KMB".contains($0) } ?? false
+        let tokenDigits = hasUnit ? String(state.displayTotal.dropLast()) : state.displayTotal
+        let tokenUnit = hasUnit ? String(state.displayTotal.suffix(1)) : ""
         let tokenUnitWidth = width(tokenUnit, unitSize)
         let availableDigits = max(30, bounds.width * 0.43 - tokenUnitWidth - 2)
         let tokenWidth = min(width(tokenDigits, tokenSize, mono: true) + 1, availableDigits)
         let tokenX = bounds.width - inset - tokenWidth - tokenUnitWidth - (hasUnit ? 2 : 0)
-        let caption = state.indicator == "busy" ? "更新" : state.scopeTitle
+        let caption = state.indicator == "busy" ? "更新" : state.displayScope
         let captionWidth = width(caption, labelSize) + 2
         let captionX = tokenX - captionWidth - 6
         drawHeader(shortName, x: quotaLabelX, width: max(0, captionX - quotaLabelX - 10), size: labelSize, color: secondary)
@@ -543,18 +684,30 @@ final class CapsuleSurface: NSView {
             NSGraphicsContext.current?.cgContext.setAlpha(detailOpacity)
             drawBattery()
             palette.border.setStroke(); shape.lineWidth = 1; shape.stroke()
-            text(state.exact, NSRect(x: 48, y: 57, width: max(0, bounds.width - 132), height: 16), size: 10, color: secondary, mono: true)
+            text(state.budgetMode ? "预算范围独立 · 点击周期可编辑" : state.exact, NSRect(x: 48, y: 57, width: max(0, bounds.width - 132), height: 16), size: 10, color: secondary, mono: true)
             let symbol = state.indicator == "busy" ? "…" : (state.indicator == "check" ? "✓" : "↻")
+            buttonBackground("refresh", NSRect(x: 16, y: 53, width: 26, height: 24))
             text(symbol, NSRect(x: 19, y: 52, width: 22, height: 25), size: 18, color: state.enabled ? mint : secondary)
-            let periodWidth = min(212, max(0, bounds.width - 92))
-            fill(NSRect(x: 16, y: 78, width: periodWidth, height: 24), radius: 8, color: ink.withAlphaComponent(0.065))
-            text("统计范围", NSRect(x: 28, y: 83, width: 57, height: 15), size: 10, color: secondary)
-            text(state.scopeTitle, NSRect(x: 92, y: 83, width: max(0, periodWidth - 102), height: 15), size: 10, color: mint, weight: .medium)
-            text("⌄", NSRect(x: periodWidth - 4, y: 81, width: 14, height: 17), size: 12, color: secondary)
+            buttonBackground("content", NSRect(x: 16, y: 78, width: 70, height: 24), base: ink.withAlphaComponent(0.065))
+            text(state.budgetMode ? "预算 ⌄" : "用量 ⌄", NSRect(x: 29, y: 83, width: 54, height: 15), size: 10, color: mint, weight: .medium)
+            buttonBackground(state.budgetMode ? "budget" : "period", NSRect(x: 94, y: 78, width: 134, height: 24), base: ink.withAlphaComponent(0.065))
+            text(state.budgetMode ? state.budgetName : "范围 · " + state.scopeTitle, NSRect(x: 105, y: 83, width: 102, height: 15), size: 10, color: mint, weight: .medium)
+            text("⌄", NSRect(x: 210, y: 81, width: 14, height: 17), size: 12, color: secondary)
+            buttonBackground("pin", NSRect(x: bounds.width - 60, y: 78, width: 44, height: 24))
             text(state.pinned ? "● 置顶" : "○ 置顶", NSRect(x: bounds.width - 58, y: 83, width: 44, height: 15), size: 10, color: state.pinned ? mint : secondary)
+            if state.budgetMode {
+                buttonBackground("budgetEdit", NSRect(x: 16, y: 110, width: bounds.width - 32, height: 24))
+                text(state.budgetPeriod, NSRect(x: 20, y: 114, width: bounds.width - 40, height: 17), size: 11, color: ink)
+                text(state.budgetScope, NSRect(x: 20, y: 146, width: bounds.width - 40, height: 17), size: 10, color: secondary)
+                fill(NSRect(x: 16, y: 174, width: bounds.width - 32, height: 76), radius: 12, color: ink.withAlphaComponent(0.05))
+                text("预算剩余", NSRect(x: 29, y: 185, width: 160, height: 15), size: 10, color: secondary)
+                text(state.budgetRemaining, NSRect(x: 29, y: 207, width: bounds.width - 58, height: 30), size: 22, color: mint, weight: .medium, mono: true)
+                text(state.budgetAmountLabel + " " + state.budgetAmount, NSRect(x: 20, y: 260, width: bounds.width - 40, height: 17), size: 10, color: secondary)
+                text(state.budgetStatus, NSRect(x: 20, y: 282, width: bounds.width - 40, height: 16), size: 9, color: secondary)
+            } else {
             for (y, label, value) in [(CGFloat(110), "模型", state.modelTitle), (CGFloat(142), "任务", state.taskTitle)] {
                 let width = max(0, bounds.width - 32)
-                fill(NSRect(x: 16, y: y, width: width, height: 24), radius: 8, color: ink.withAlphaComponent(0.065))
+                buttonBackground(y == 110 ? "model" : "task", NSRect(x: 16, y: y, width: width, height: 24), base: ink.withAlphaComponent(0.065))
                 text(label, NSRect(x: 28, y: y + 5, width: 48, height: 15), size: 10, color: secondary)
                 text(value, NSRect(x: 92, y: y + 5, width: max(0, width - 112), height: 15), size: 10, color: mint, weight: .medium)
                 text("⌄", NSRect(x: bounds.width - 36, y: y + 3, width: 14, height: 17), size: 12, color: secondary)
@@ -570,25 +723,30 @@ final class CapsuleSurface: NSView {
             }
             text(state.cache, NSRect(x: 20, y: 264, width: bounds.width - 40, height: 15), size: 10, color: secondary)
             text(state.status, NSRect(x: 20, y: 282, width: bounds.width - 40, height: 15), size: 9, color: secondary)
+            }
             text("胶囊主题", NSRect(x: 20, y: 306, width: 110, height: 15), size: 10, color: secondary)
             let themeX = bounds.width - 162
             fill(NSRect(x: themeX, y: 300, width: 146, height: 24), radius: 8, color: ink.withAlphaComponent(0.05))
             fill(NSRect(x: themeX + (light ? 73 : 1), y: 301, width: 72, height: 22), radius: 7, color: ink.withAlphaComponent(0.11))
+            buttonBackground("themeDark", NSRect(x: themeX, y: 300, width: 72, height: 24))
+            buttonBackground("themeLight", NSRect(x: themeX + 72, y: 300, width: 74, height: 24))
             text("深色", NSRect(x: themeX + 23, y: 305, width: 40, height: 15), size: 10, color: light ? secondary : ink, weight: .medium)
             text("浅色", NSRect(x: themeX + 96, y: 305, width: 40, height: 15), size: 10, color: light ? ink : secondary, weight: .medium)
-            text("自动刷新", NSRect(x: 20, y: 338, width: 110, height: 15), size: 10, color: secondary)
-            fill(NSRect(x: themeX, y: 332, width: 146, height: 24), radius: 8, color: ink.withAlphaComponent(0.065))
+            text("Token 自动刷新", NSRect(x: 20, y: 338, width: 110, height: 15), size: 10, color: secondary)
+            buttonBackground("interval", NSRect(x: themeX, y: 332, width: 146, height: 24), base: ink.withAlphaComponent(0.065))
             let intervalLabel = state.refreshSeconds == 0 ? "关闭" : "每 \(state.refreshSeconds) 秒"
             text(intervalLabel, NSRect(x: themeX + 12, y: 337, width: 113, height: 15), size: 10, color: ink, weight: .medium)
             text("⌄", NSRect(x: themeX + 127, y: 335, width: 14, height: 17), size: 12, color: secondary)
             // Keep footer controls in their final layout while the window reveals
             // the content. Following the animated bottom would cross other rows.
             let buttonY = Self.large.height - 37
-            fill(NSRect(x: 16, y: buttonY, width: 86, height: 25), radius: 8, color: mint.withAlphaComponent(0.13))
-            fill(NSRect(x: 110, y: buttonY, width: 88, height: 25), radius: 8, color: ink.withAlphaComponent(0.05))
+            buttonBackground("main", NSRect(x: 16, y: buttonY, width: 86, height: 25), base: mint.withAlphaComponent(0.13))
+            buttonBackground("only", NSRect(x: 110, y: buttonY, width: 88, height: 25), base: ink.withAlphaComponent(0.05))
+            buttonBackground("close", NSRect(x: bounds.width - 70, y: buttonY, width: 54, height: 25))
             text("打开主面板", NSRect(x: 29, y: buttonY + 6, width: 70, height: 15), size: 10, color: mint, weight: .medium)
             text("仅保留胶囊", NSRect(x: 123, y: buttonY + 6, width: 70, height: 15), size: 10, color: secondary)
             text("关闭", NSRect(x: bounds.width - 51, y: buttonY + 6, width: 32, height: 15), size: 10, color: secondary)
+            drawButtonOuterGlow()
         }
         NSGraphicsContext.restoreGraphicsState()
     }

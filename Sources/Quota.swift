@@ -16,6 +16,7 @@ struct QuotaWindow {
     let label: String
     let remaining: Double
     let resetsAt: Date?
+    var durationMinutes: Int = 0
     var compact: String { "\(label)余 \(Int(remaining.rounded(.down)))%" }
 }
 struct QuotaSnapshot {
@@ -44,7 +45,7 @@ struct QuotaSnapshot {
             let n = minutes.intValue
             let label = n == 10080 ? "周" : (n == 300 ? "5h" : (n % 60 == 0 && n > 0 ? "\(n / 60)h" : "\(n)分钟"))
             let reset = (row["resets_at"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
-            snapshot.windows.append(QuotaWindow(label: label, remaining: min(100, max(0, 100 - used.doubleValue)), resetsAt: reset))
+            snapshot.windows.append(QuotaWindow(label: label, remaining: min(100, max(0, 100 - used.doubleValue)), resetsAt: reset, durationMinutes: n))
         }
         return snapshot
     }

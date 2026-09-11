@@ -100,7 +100,7 @@ let expanded = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElem
 let refresh = expanded.first { $0.accessibilityLabel() == "正在刷新" }!
 _ = refresh.accessibilityPerformPress()
 precondition(invoked == "details", "Disabled refresh must not execute")
-precondition(expanded.count == 13, "Expanded period, themes, and refresh interval must be accessible")
+precondition(expanded.count == 14, "Expanded content, period, themes, and refresh interval must be accessible")
 state.scope = 1; state.rangeDays = "30"
 precondition(surface.accessibilityChildren()!.contains { ($0 as! NSAccessibilityElement).accessibilityLabel() == "浮窗统计范围，30天" }, "Period picker must announce the selected range")
 state.refreshSeconds = 0

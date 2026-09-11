@@ -54,6 +54,7 @@ final class Collector {
 }
 final class State { var status = "" }
 final class Fixture {
+    func refreshBudgets(manual: Bool) {}
     var compactMode = true, terminating = false, compactDirty = false, compactManualQueued = false, compactSelectionQueued = false
     var nativeSummaryBusy = false
     var compactDirtyGeneration = 0, compactEpoch = 0, autoSeconds = 1

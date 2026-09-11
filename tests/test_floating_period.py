@@ -110,6 +110,7 @@ func payload(_ count: Int, task: String = "fixture task") -> Object {
 }
 func collected(_ count: Int, reset: Bool = false) -> Object { ["today": payload(10), "filtered": payload(count), "filter_reset": reset] }
 final class MainFixture: NSObject {
+    func refreshBudgets(manual: Bool) {}
     let capsuleState = FixtureState(), backend = FixtureBackend(), session = FixtureSession(), collector = FixtureCollector()
     var days = preferences.string(forKey: "filterDays") ?? "30"
     var floatingDays = FloatingUsageQuery.restoredDays(preferences)

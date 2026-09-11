@@ -15,6 +15,16 @@ python3 scripts/render_previews.py --source Sources/Capsule.swift --output .loca
 
 这套预览验证绘制布局；真实鼠标事件、窗口层级与系统菜单仍需单独验证。
 
+README 的两张收起浮窗示意图取自上述输出。更新额度配色后，在仓库根目录执行以下命令同步图片；50% 应显示为对应主题的琥珀色：
+
+```sh
+python3 scripts/render_previews.py --output .local/previews
+cp .local/previews/compact-dark-50.png docs/images/compact-dark-50.png
+cp .local/previews/compact-light-50.png docs/images/compact-light-50.png
+```
+
+发布文档前检查两张图和相对链接即可；仅补充说明或替换示意图时，沿用已有代码测试结果，不需要启动已安装应用或重测无关功能。
+
 ## 已运行应用的内存采样
 
 ```sh

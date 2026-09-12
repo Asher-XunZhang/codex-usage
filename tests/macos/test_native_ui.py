@@ -51,14 +51,31 @@ withExtendedLifetime(delegate) { app.run() }
 let app = NSApplication.shared
 var progress: [CGFloat] = []
 let animation = CapsuleAnimation(duration: 0.12, animationCurve: .easeInOut)
-animation.animationBlockingMode = .nonblocking
-animation.frameRate = 60
 animation.step = { progress.append($0) }
-animation.start()
-RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+// Advance the real NSAnimation progress property at known instants. A busy
+// runner may deliver its first timer tick after this short animation ends;
+// timer scheduling must not decide whether interpolation has intermediate values.
+let samples: [NSAnimation.Progress] = [0, 0.25, 0.5, 0.75, 1]
+for sample in samples { animation.currentProgress = sample }
+precondition(progress.count == samples.count, "Every explicit progress update must reach the production step callback")
 precondition(progress.contains { $0 > 0 && $0 < 1 }, "Animation must include intermediate frames")
-precondition(progress.last == 1 && !animation.isAnimating, "Animation must finish and stop its timer")
+precondition(progress.dropFirst().dropLast().allSatisfy { $0 > 0 && $0 < 1 }, "Every interior sample must interpolate between endpoints")
+precondition(progress.first == 0 && progress.last == 1, "Interpolation must preserve both endpoints")
 precondition(zip(progress, progress.dropFirst()).allSatisfy { $0 <= $1 }, "Animation must be monotonic")
+// Separately exercise the actual native timer without assigning its progress or
+// stopping it manually. Wait for its final callback, with a failure deadline.
+var timedProgress: [CGFloat] = []
+let timedAnimation = CapsuleAnimation(duration: 0.12, animationCurve: .easeInOut)
+timedAnimation.animationBlockingMode = .nonblocking
+timedAnimation.frameRate = 60
+timedAnimation.step = { timedProgress.append($0) }
+timedAnimation.start()
+let deadline = Date().addingTimeInterval(2)
+while timedProgress.last != 1 && Date() < deadline {
+    RunLoop.main.run(mode: .default, before: deadline)
+}
+precondition(timedProgress.last == 1 && !timedAnimation.isAnimating, "Animation must finish and stop its timer")
+precondition(zip(timedProgress, timedProgress.dropFirst()).allSatisfy { $0 <= $1 }, "Timer-driven animation must be monotonic")
 let state = CapsuleState()
 state.scope = 1; state.rangeDays = "7"
 precondition(state.scopeTitle == "7天", "A selected period must be named explicitly")

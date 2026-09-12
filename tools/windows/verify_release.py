@@ -357,7 +357,9 @@ def main(*, legacy=False):
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(payload, encoding='utf-8')
-    print(payload)
+    # CI and older Windows consoles may use cp1252. Keep stdout valid JSON even
+    # when native diagnostics contain Chinese text or mathematical symbols.
+    print(json.dumps(report, ensure_ascii=True, indent=2))
 
 
 if __name__ == '__main__':

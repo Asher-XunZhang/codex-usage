@@ -32,6 +32,21 @@ class WindowsDistributionTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.addCleanup(self.temp.cleanup)
 
+    def test_verifier_outputs_valid_json_on_legacy_windows_console(self):
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding='cp1252')
+        report_path = self.root / 'report.json'
+        with patch.object(sys, 'argv', ['verify', '--app', str(self.root), '--report', str(report_path)]), \
+             patch.object(windows_verify, 'validate_app', return_value=({'version': '1.0.2'}, [])), \
+             patch.object(windows_verify, 'smoke', return_value={'label': '无限 ∞'}), \
+             patch.object(sys, 'stdout', console):
+            windows_verify.main()
+            console.flush()
+        result = json.loads(raw.getvalue().decode('cp1252'))
+        self.assertEqual(result['offline_smoke']['label'], '无限 ∞')
+        self.assertEqual(result, json.loads(report_path.read_text(encoding='utf-8')))
+        console.detach()
+
     def test_manifest_is_pinned_and_rejects_download_override(self):
         expected = load_manifest()
         self.assertEqual(expected['version'], '3.14.7')

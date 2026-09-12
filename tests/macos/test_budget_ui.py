@@ -158,7 +158,7 @@ print("Budget native UI checks passed")
             binary = root / "budget-ui-check"
             budget_source = macos_source('BudgetUI.swift')
             compiled = subprocess.run(
-                ["xcrun", "swiftc", "-swift-version", "5", str(source), str(budget_source), str(budget_source.with_name("ControlFeedback.swift")), "-o", str(binary)],
+                ["xcrun", "swiftc", "-swift-version", "5", str(source), str(budget_source), str(macos_source("ControlFeedback.swift")), "-o", str(binary)],
                 capture_output=True, text=True, timeout=90,
             )
             self.assertEqual(compiled.returncode, 0, compiled.stderr)

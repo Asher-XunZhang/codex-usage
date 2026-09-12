@@ -22,6 +22,8 @@ class DesktopLifecycleTests(unittest.TestCase):
         self.home = Path(self.temp.name)
         self.state = self.home / 'worker.json'
         self.children = []
+        self.worker_log = self.home / 'worker.log'
+        self.log_stream = self.worker_log.open('ab')
         self.control_token = secrets.token_hex(32)
         self.worker_env = dict(os.environ, CODEX_USAGE_BACKEND_CONTROL_TOKEN=self.control_token)
 
@@ -30,10 +32,15 @@ class DesktopLifecycleTests(unittest.TestCase):
             if child.poll() is None:
                 child.kill()
             child.wait(timeout=5)
+        self.log_stream.close()
         self.temp.cleanup()
 
     def command(self, parent):
-        return [sys.executable, '-E', '-s', '-B', str(SERVER), '--port', '0',
+        bootstrap = ('import faulthandler, os, runpy, sys; '
+                     'faulthandler.dump_traceback_later(5); '
+                     'sys.argv=sys.argv[1:]; sys.path.insert(0, os.path.dirname(sys.argv[0])); '
+                     'runpy.run_path(sys.argv[0], run_name="__main__")')
+        return [sys.executable, '-E', '-s', '-B', '-c', bootstrap, str(SERVER), '--port', '0',
                 '--codex-home', str(self.home), '--state-file', str(self.state),
                 '--instance-id', 'desktop-test', '--parent-pid', str(parent)]
 
@@ -50,7 +57,9 @@ class DesktopLifecycleTests(unittest.TestCase):
             except (OSError, ValueError):
                 pass
             time.sleep(.05)
-        self.fail('worker did not become healthy')
+        self.fail('worker did not become healthy; process states=' +
+                  repr([child.poll() for child in self.children]) + '\n' +
+                  self.worker_log.read_text(encoding='utf-8', errors='replace')[-12000:])
 
     def assert_released(self, state):
         deadline = time.monotonic() + 5
@@ -63,7 +72,7 @@ class DesktopLifecycleTests(unittest.TestCase):
             self.assertNotEqual(sock.connect_ex(('127.0.0.1', port)), 0)
 
     def test_graceful_shutdown_releases_worker_state_and_port(self):
-        child = subprocess.Popen(self.command(os.getpid()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.worker_env)
+        child = subprocess.Popen(self.command(os.getpid()), stdout=self.log_stream, stderr=self.log_stream, env=self.worker_env)
         self.children.append(child)
         state = self.ready()
         if os.name == 'nt':
@@ -77,7 +86,7 @@ class DesktopLifecycleTests(unittest.TestCase):
         self.assert_released(state)
 
     def test_shutdown_rejects_wrong_instance_and_foreign_origin(self):
-        child = subprocess.Popen(self.command(os.getpid()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.worker_env)
+        child = subprocess.Popen(self.command(os.getpid()), stdout=self.log_stream, stderr=self.log_stream, env=self.worker_env)
         self.children.append(child)
         state = self.ready()
         opener = build_opener(ProxyHandler({}))
@@ -91,7 +100,7 @@ class DesktopLifecycleTests(unittest.TestCase):
             self.assertIsNone(child.poll())
 
     def test_public_health_identity_cannot_authorize_shutdown(self):
-        child = subprocess.Popen(self.command(os.getpid()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.worker_env)
+        child = subprocess.Popen(self.command(os.getpid()), stdout=self.log_stream, stderr=self.log_stream, env=self.worker_env)
         self.children.append(child)
         state = self.ready()
         opener = build_opener(ProxyHandler({}))
@@ -112,7 +121,7 @@ class DesktopLifecycleTests(unittest.TestCase):
     def test_worker_without_private_control_channel_has_no_shutdown_endpoint(self):
         env = dict(os.environ)
         env.pop('CODEX_USAGE_BACKEND_CONTROL_TOKEN', None)
-        child = subprocess.Popen(self.command(os.getpid()), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        child = subprocess.Popen(self.command(os.getpid()), stdout=self.log_stream, stderr=self.log_stream, env=env)
         self.children.append(child)
         state = self.ready()
         with self.assertRaises(HTTPError) as error:
@@ -124,7 +133,10 @@ class DesktopLifecycleTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == 'nt', 'Windows requires direct-parent validation before startup')
     def test_unix_missing_parent_uses_watcher_instead_of_new_startup_rejection(self):
-        result = subprocess.run(self.command(2147483647), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        try:
+            result = subprocess.run(self.command(2147483647), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+        except subprocess.TimeoutExpired as exc:
+            self.fail('worker failed to stop:\n' + (exc.stderr or b'').decode(errors='replace'))
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         self.assertFalse(self.state.exists())
 
@@ -134,7 +146,7 @@ class DesktopLifecycleTests(unittest.TestCase):
                    'args=sys.argv[1:]; args[-1]=str(os.getpid()); '
                    'child=subprocess.Popen(args); time.sleep(60)')
         parent = subprocess.Popen([sys.executable, '-E', '-s', '-B', '-c', wrapper, *command],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                  stdout=self.log_stream, stderr=self.log_stream)
         self.children.append(parent)
         state = self.ready()
         try:

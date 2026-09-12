@@ -1333,8 +1333,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item.isVisible = true
         item.button?.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
             NSColor.black.setFill()
-            for (i, height) in [6.0, 13.0, 9.0].enumerated() {
-                NSBezierPath(roundedRect: NSRect(x: 1 + CGFloat(i) * 5, y: 2, width: 3, height: height), xRadius: 1, yRadius: 1).fill()
+            let heights: [CGFloat] = [6, 13, 9]
+            for (i, height) in heights.enumerated() {
+                let x: CGFloat = 1 + CGFloat(i) * 5
+                NSBezierPath(roundedRect: NSRect(x: x, y: 2, width: 3, height: height), xRadius: 1, yRadius: 1).fill()
             }
             return true
         }

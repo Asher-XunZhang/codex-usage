@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 
-INSTALLER = ROOT / 'tools/macos/install.sh'
+INSTALLER = ROOT / 'scripts/install.sh'
 APP_NAME = 'Codex用量.app'
 QUARANTINE = 'com.apple.quarantine'
 

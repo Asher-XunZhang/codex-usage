@@ -24,7 +24,7 @@
 | 刷新 | macOS `manualRefresh()` 已请求本地日志与账号额度。Windows 的增量是两来源状态与错误独立、单来源重试，以及失败路径可靠性；不是首次增加双来源刷新。 |
 | 进程与隐私 | 已有常驻宿主、按需主面板与短时采集，关闭主面板释放其进程／统计服务；不上传聊天记录，不新增模型调用。Windows 保留此架构。 |
 
-基线入口：[Main.swift](../../src/macos/App/Main.swift)、[Capsule.swift](../../src/macos/Features/Floating/Capsule.swift)、[BudgetCore.swift](../../src/macos/Features/Budgets/BudgetCore.swift)、[Runtime.swift](../../src/macos/Infrastructure/Runtime.swift)。整理本清单时，macOS 原生源码内容相对该基线没有修改；2026-09-13 目录整理后位于 `src/macos/`，链接已更新，历史行号与验收范围仍按原记录理解。
+基线入口：[Main.swift](../../src/macos/App/Main.swift)、[Capsule.swift](../../src/macos/Features/Floating/Capsule.swift)、[BudgetCore.swift](../../src/macos/Features/Budgets/BudgetCore.swift)、[Runtime.swift](../../src/macos/Infrastructure/Runtime.swift)。2026-09-13 目录整理后位于 `src/macos/`。发布 CI 另暴露了两处基线兼容问题：`Main.swift` 显式标注状态栏图形坐标的 `CGFloat` 类型，保持原绘制尺寸；[Summary.c](../../src/macos/Helpers/Summary.c) 在旧 SQLite JSON1 截断字符串前拒绝 JSON 空字符转义，同时保留合法字面量反斜杠。这些是原生源码的最小修复，并非 Windows UI 或预算功能同步；现有 macOS v1.0.1 下载未被替换。原生编译与行为结果仍以修复后 CI 为准。
 
 ## 3. Windows 已实现：建议 macOS 对齐的行为
 

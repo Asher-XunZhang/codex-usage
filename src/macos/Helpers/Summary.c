@@ -84,6 +84,13 @@ static int budget_requests(sqlite3 *db,const char *path,BudgetRequest *requests,
  size_t size=fread(body,1,BUDGET_MAX_INPUT+1,file);int valid=!ferror(file)&&size<=BUDGET_MAX_INPUT&&size>0;
  fclose(file);if(!valid){free(body);return 0;}body[size]='\0';
  if(strlen(body)!=size){free(body);return 0;}
+ // Older SQLite JSON1 versions truncate decoded strings at a NUL, before
+ // budget_text can compare their byte length. Reject the JSON escape first;
+ // consume other escape pairs so a literal backslash followed by u0000 is valid.
+ for(size_t i=0;i<size;i++)if(body[i]=='\\'){
+  if(size-i>=6&&!memcmp(body+i,"\\u0000",6)){free(body);return 0;}
+  if(i+1<size)i++;
+ }
  sqlite3_stmt *s=NULL;
  const char *check="SELECT json_valid(?1)";
  if(sqlite3_prepare_v2(db,check,-1,&s,NULL)!=SQLITE_OK){free(body);return 0;}

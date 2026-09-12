@@ -106,7 +106,9 @@ class StructureMigrationTests(unittest.TestCase):
     def test_windows_build_outputs_allow_nested_artifacts_but_reject_sources_and_escape(self):
         import tools.windows.build as build
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            # macOS exposes temporary paths through /var -> /private/var. Match
+            # the canonical ROOT used by production without relaxing link checks.
+            root = Path(directory).resolve()
             (root / 'build').mkdir()
             with patch.object(build, 'ROOT', root):
                 for relative in ('build/windows/x64', 'build/windows/candidates/one', 'build/windows-candidate'):
@@ -125,7 +127,7 @@ class StructureMigrationTests(unittest.TestCase):
     def test_windows_build_output_rejects_a_linked_ancestor(self):
         import tools.windows.build as build
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             (root / 'build').mkdir()
             external = root / 'unrelated'
             external.mkdir()

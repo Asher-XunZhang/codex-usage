@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 from urllib.error import HTTPError
@@ -17,6 +18,15 @@ from urllib.error import HTTPError
 SERVER = BACKEND / 'dashboard_server.py'
 
 class DesktopLifecycleTests(unittest.TestCase):
+    def test_local_server_binds_without_reverse_dns(self):
+        from dashboard_server import LocalHTTPServer, make_handler
+        from dashboard_data import UsageIndex
+        with patch('socket.getfqdn', side_effect=AssertionError('Local startup must not resolve DNS')):
+            with LocalHTTPServer(('127.0.0.1', 0), make_handler(UsageIndex(self.home))) as server:
+                self.assertEqual(server.server_name, '127.0.0.1')
+                self.assertEqual(server.server_port, server.socket.getsockname()[1])
+                self.assertGreater(server.server_port, 0)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='codex desktop 生命周期 ')
         self.home = Path(self.temp.name)

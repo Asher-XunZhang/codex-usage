@@ -12,6 +12,7 @@ import sys
 import subprocess
 import time
 import socket
+from socketserver import TCPServer
 import signal
 from contextlib import nullcontext, contextmanager
 from datetime import datetime, timezone
@@ -250,7 +251,10 @@ class LocalHTTPServer(ThreadingHTTPServer):
     def server_bind(self):
         if os.name == 'nt':
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+        # This listener uses a numeric loopback address. HTTPServer's default
+        # reverse DNS lookup can block startup (and parent-exit cleanup) offline.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def main():

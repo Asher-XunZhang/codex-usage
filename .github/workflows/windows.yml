@@ -1,0 +1,64 @@
+name: Windows desktop
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.7'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.401'
+      - name: Shared backend regression tests
+        run: python -B test.py
+      - name: Build self-contained desktop with verified embedded Python
+        run: python -B scripts/build_windows.py --dotnet "${{ env.DOTNET_ROOT }}/dotnet.exe"
+      - name: Regression tests under the bundled isolated Python
+        env:
+          CODEX_USAGE_WINDOWS_EXE: ${{ github.workspace }}/build/windows-x64/CodexUsage.exe
+        run: build/windows-x64/python/python.exe -E -s -B test.py
+      - name: Host and panel lifecycle with isolated synthetic data
+        run: python -B scripts/test_windows_lifecycle.py --app build/windows-x64/CodexUsage.exe --output build/windows-lifecycle.json
+      - name: Package offline portable application and source
+        run: python -B scripts/package_windows.py
+      - name: Verify distribution and offline synthetic-data smoke
+        run: python -B scripts/verify_windows.py --report build/windows-verification.json --controls-output build/windows-control-previews
+      - name: Save Popup previews and interaction report even when verification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-usage-windows-controls
+          path: build/windows-control-previews/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-usage-windows-x64
+          path: |
+            dist/*-windows-x64.zip
+            dist/*-windows-x64.zip.sha256
+            build/windows-verification.json
+            build/windows-lifecycle.json
+          if-no-files-found: error
+
+  shared-macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: macOS and shared backend regression tests
+        run: python -B test.py

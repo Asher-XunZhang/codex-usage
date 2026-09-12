@@ -1,8 +1,13 @@
 """Precise, bounded, read-only budget aggregation using synthetic accounting."""
+from contextlib import closing
 from datetime import datetime
 import json
 import os
 from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / 'backend'
+def macos_source(name):
+    return ROOT / 'Sources' / name
 import shutil
 import sqlite3
 import subprocess
@@ -25,7 +30,7 @@ class BudgetQueryTests(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory(prefix='native budget build ')
         cls.binary = Path(cls.build.name) / 'summary'
         subprocess.run(['xcrun', 'clang', '-Os', '-Wall', '-Wextra',
-                        str(Path(__file__).parents[1] / 'Sources/Summary.c'),
+                        str(macos_source('Summary.c')),
                         '-lsqlite3', '-o', str(cls.binary)], check=True, capture_output=True)
 
     @classmethod
@@ -80,7 +85,7 @@ class BudgetQueryTests(unittest.TestCase):
         self.index.scan()
         # Preserve explicit mixed offsets in the synthetic index as well: the
         # normal parser often normalizes them before persistence.
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             db.execute("UPDATE usage SET timestamp='2026-09-09T20:30:00-04:00' WHERE response='root-2'")
         result = self.run_query([
             self.request(end=epoch('2026-09-10T01:00:00Z')),
@@ -131,7 +136,7 @@ class BudgetQueryTests(unittest.TestCase):
             self.assertEqual(row['lower_bound_' + field], known)
         # A future/partial schema record must not turn a missing core metric into
         # zero either, even though today's parser rejects such incomplete rows.
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             db.execute("UPDATE usage SET total_tokens=NULL WHERE response='root-1'")
         row = self.run_query()['results'][0]['rows'][0]
         self.assertIsNone(row['total_tokens'])
@@ -169,7 +174,7 @@ class BudgetQueryTests(unittest.TestCase):
     def test_invalid_record_time_and_global_coverage_are_visible(self):
         self.write()
         self.index.scan()
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             db.execute("UPDATE usage SET timestamp='not-an-instant'")
             snapshot = json.loads(db.execute("SELECT value FROM kv WHERE key='snapshot'").fetchone()[0])
             snapshot['issues'] = ['partial log'] * 40
@@ -186,18 +191,18 @@ class BudgetQueryTests(unittest.TestCase):
     def test_only_initializer_migrates_expression_index_and_reader_never_creates_cache(self):
         self.write()
         self.index.scan()
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             plan = str(db.execute("EXPLAIN QUERY PLAN SELECT * FROM usage WHERE julianday(timestamp)>=julianday(?,'unixepoch') AND julianday(timestamp)<julianday(?,'unixepoch')", (0, 9999999999)).fetchall())
             self.assertIn('usage_budget_time', plan)
             db.execute('DROP INDEX usage_budget_time')
             before = db.execute("SELECT value FROM kv WHERE key='snapshot'").fetchone()[0]
         shutil.rmtree(self.home / 'sessions')
         self.assertEqual(self.run_query()['results'][0]['rows'][0]['total_tokens'], 120)
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='usage_budget_time'").fetchone())
             self.assertEqual(db.execute("SELECT value FROM kv WHERE key='snapshot'").fetchone()[0], before)
         DiskUsageIndex(self.home, self.index.cache)
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='usage_budget_time'").fetchone())
         absent = self.home / 'does-not-exist' / 'missing.sqlite'
         self.run_query(cache=absent, expected=75)
@@ -254,7 +259,7 @@ class BudgetQueryTests(unittest.TestCase):
                                     '--budgets-file', str(payload)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         try:
             first = process.stdout.read(1)  # Output means its read snapshot is pinned.
-            with sqlite3.connect(self.index.cache) as db:
+            with closing(sqlite3.connect(self.index.cache)) as db, db:
                 db.execute('UPDATE usage SET total_tokens=999')
             remainder, error = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 0, error)
@@ -270,7 +275,7 @@ class BudgetQueryTests(unittest.TestCase):
     def test_excessive_group_output_and_nonregular_request_file_fail_closed(self):
         self.write()
         self.index.scan()
-        with sqlite3.connect(self.index.cache) as db:
+        with closing(sqlite3.connect(self.index.cache)) as db, db:
             template = db.execute('SELECT * FROM usage').fetchone()
             columns = [row[1] for row in db.execute('PRAGMA table_info(usage)')]
             rows = []

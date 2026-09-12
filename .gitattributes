@@ -1,0 +1,21 @@
+* text=auto
+*.py text eol=lf
+*.swift text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf
+*.png binary
+*.ico binary
+*.zip binary
+*.gz binary
+*.rtf binary
+# Preserve publisher bytes used by pinned license digests on every checkout.
+resources/third-party-licenses/** -text -whitespace
+resources/licenses/** -text -whitespace

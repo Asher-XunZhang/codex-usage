@@ -13,3 +13,6 @@ resources/runtimes/.*.part
 *.jsonl
 *.log
 *.app/
+
+windows/bin/
+windows/obj/

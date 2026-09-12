@@ -17,31 +17,41 @@ RELEASES = [('AppleSilicon', 'arm64'), ('Intel', 'x86_64')]
 DOCUMENTS = ['README.md', 'LICENSE', 'THIRD-PARTY.md', 'CHANGELOG.md']
 PRIVATE_SUFFIXES = ('.jsonl', '.sqlite', '.sqlite3', '.db', '.csv', '.log', '.pyc', '.pyo')
 PRIVATE_NAMES = {'auth.json', 'config.toml', '.DS_Store', '.env'}
-SOURCE_TREES = {'Sources': {'.swift', '.c', '.h'}, 'backend': {'.py'},
+SOURCE_TREES = {'windows': {'.cs', '.csproj', '.xaml', '.manifest', '.ico'}, 'Sources': {'.swift', '.c', '.h'}, 'backend': {'.py'},
                 'tests': {'.py'}, 'scripts': {'.py', '.swift', '.sh'}, 'docs': {'.md', '.png'},
                 'skill': {'.md', '.yaml', '.py'}}
 
 
 def check_path(name):
     path = Path(name)
-    if path.is_absolute() or any(part in ('..', '__pycache__') or part.startswith('.') for part in path.parts):
+    metadata = path.as_posix().removeprefix('source/') == '.github/workflows/windows.yml'
+    if path.is_absolute() or any(part in ('..', '__pycache__', 'bin', 'obj') or part.startswith('.') and not metadata for part in path.parts):
         raise ValueError(f'Unsafe or hidden release path: {name}')
     if name.lower().endswith(PRIVATE_SUFFIXES) or path.name in PRIVATE_NAMES:
         raise ValueError(f'Local/private data is not permitted in a release: {name}')
 
 
 def regular_files(directory):
-    for path in sorted(directory.rglob('*')):
-        if path.is_symlink():
-            raise ValueError(f'Symlinks are not permitted in the release payload: {path}')
-        if path.is_file():
-            yield path
+    import os
+    directory = Path(directory)
+    if not directory.exists():
+        return
+    for current, directories, names in os.walk(directory):
+        for name in directories + names:
+            path = Path(current) / name
+            if path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 0x400:
+                raise ValueError(f'Links are not permitted in release inputs: {path}')
+        directories[:] = sorted(d for d in directories if d not in ('bin', 'obj', '__pycache__', 'node_modules') and not d.startswith('.'))
+        for name in sorted(names):
+            path = Path(current) / name
+            if path.is_file():
+                yield path
 
 
 def source_files(root):
     root = Path(root)
     result = []
-    for name in DOCUMENTS + ['build.py', 'test.py', 'package.py']:
+    for name in DOCUMENTS + ['build.py', 'test.py', 'package.py', '.github/workflows/windows.yml']:
         path = root / name
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing regular source file: {path}')
@@ -59,7 +69,7 @@ def source_files(root):
             if path.suffix in suffixes:
                 check_path(relative.as_posix())
                 result.append(path)
-    for name in ['resources/runtimes/manifest.json', 'resources/THIRD-PARTY.md']:
+    for name in ['resources/runtimes/manifest.json', 'resources/runtimes/windows-manifest.json', 'resources/THIRD-PARTY.md']:
         path = root / name
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing regular resource file: {path}')
@@ -69,6 +79,9 @@ def source_files(root):
             result.append(path)
         else:
             raise ValueError(f'Unexpected third-party license file: {path}')
+    for path in regular_files(root / 'resources/licenses'):
+        check_path(path.relative_to(root).as_posix())
+        result.append(path)
     return result
 
 

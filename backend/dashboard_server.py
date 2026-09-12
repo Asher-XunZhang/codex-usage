@@ -5,12 +5,14 @@ import csv
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.client import HTTPException
 import io
+import hmac
 import json
 import os
 import sys
 import subprocess
 import time
 import socket
+from socketserver import TCPServer
 import signal
 from contextlib import nullcontext, contextmanager
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import build_opener, ProxyHandler
 
 from dashboard_data import UsageIndex
+from parent_watch import ParentMonitor
 
 
 @contextmanager
@@ -109,7 +112,7 @@ def supervise_until_stopped(command, stop, max_restarts, delay, health_url, job)
     return 1
 
 
-def make_handler(index, instance_id=None):
+def make_handler(index, instance_id=None, shutdown_token=None):
     assets = Path(__file__).resolve().parent / "dashboard"
 
     class Handler(BaseHTTPRequestHandler):
@@ -160,6 +163,16 @@ def make_handler(index, instance_id=None):
                 elif path == "/api/settings":
                     index.configure_refresh(body.get("refresh_seconds"))
                     data = {"refresh_seconds": index.refresh_seconds}
+                elif path == "/api/shutdown":
+                    if not shutdown_token:
+                        self.send(404, b"Not found", "text/plain")
+                        return
+                    supplied = self.headers.get("X-Codex-Control", "")
+                    if not hmac.compare_digest(supplied.encode("utf-8"), shutdown_token.encode("utf-8")):
+                        self.send(403, b"Forbidden", "text/plain")
+                        return
+                    index.stop.set()
+                    data = {"stopping": True}
                 else:
                     self.send(404, b"Not found", "text/plain")
                     return
@@ -238,16 +251,10 @@ class LocalHTTPServer(ThreadingHTTPServer):
     def server_bind(self):
         if os.name == 'nt':
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
-
-
-def watch_parent(parent_pid, stop):
-    """An app-owned worker must exit even when its native parent is force-quit."""
-    while not stop.is_set():
-        if os.getppid() != parent_pid:
-            stop.set()
-            return
-        stop.wait(0.5)
+        # This listener uses a numeric loopback address. HTTPServer's default
+        # reverse DNS lookup can block startup (and parent-exit cleanup) offline.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def main():
@@ -255,15 +262,15 @@ def main():
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME") or Path.home()/".codex"))
     parser.add_argument("--state-file", type=Path)
-    parser.add_argument("--instance-id", help="Local service identity used by the macOS launcher")
+    parser.add_argument("--instance-id", help="Local service identity used by the desktop launcher")
     parser.add_argument("--log-file", type=Path, help="Append lifecycle and error output, including when run with pythonw")
     parser.add_argument("--supervise", action="store_true", help="Watch the server process; retry unexpected exits up to three times")
-    parser.add_argument("--parent-pid", type=int, help="Exit when this direct parent exits (macOS desktop app)")
+    parser.add_argument("--parent-pid", type=int, help="Exit when this direct parent exits (desktop app)")
     parser.add_argument("--refresh-seconds", type=int, default=30, help="Seconds between scans; 0 disables automatic scans")
     parser.add_argument("--cache-path", type=Path, help="Private persistent SQLite index for the native desktop app")
     args = parser.parse_args()
-    if args.parent_pid is not None and (args.parent_pid <= 1 or os.name == "nt" or args.supervise):
-        parser.error("--parent-pid requires a direct Unix parent and cannot be combined with --supervise")
+    if args.parent_pid is not None and (args.parent_pid <= 1 or args.supervise or (os.name == 'nt' and os.getppid() != args.parent_pid)):
+        parser.error("--parent-pid requires a live direct parent and cannot be combined with --supervise")
     if args.log_file:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = args.log_file.open("a", encoding="utf-8", buffering=1)
@@ -289,30 +296,36 @@ def main():
         index = DiskUsageIndex(args.codex_home.expanduser(), args.cache_path, refresh_seconds=args.refresh_seconds)
     else:
         index = UsageIndex(args.codex_home.expanduser(), refresh_seconds=args.refresh_seconds)
-    if args.parent_pid is not None:
-        threading.Thread(target=watch_parent, args=(args.parent_pid, index.stop), daemon=True).start()
-    server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(index, args.instance_id))
-    threading.Thread(target=index.run, daemon=True).start()
-    state = {"pid": os.getpid(), "url": f"http://127.0.0.1:{server.server_port}", "scope": "local-only"}
-    if args.state_file:
-        args.state_file.parent.mkdir(parents=True, exist_ok=True)
-        args.state_file.write_text(json.dumps(state), encoding="utf-8")
-    print(json.dumps(state), flush=True)
-    server.timeout = 0.25
-    try:
-        with shutdown_signals(index.stop):
-            while not index.stop.is_set():
-                server.handle_request()
-    finally:
-        index.stop.set()
-        server.server_close()
+    with ParentMonitor(args.parent_pid, index.stop) as monitor:
+        index.stop = monitor.stop
+        monitor.start()
+        # The launcher passes a per-worker secret only through the child environment.
+        # It is never included in /health, the state file, command line, or logs.
+        shutdown_token = os.environ.pop('CODEX_USAGE_BACKEND_CONTROL_TOKEN', '')
+        if os.name != 'nt' or len(shutdown_token) != 64 or any(c not in '0123456789abcdef' for c in shutdown_token):
+            shutdown_token = None
+        server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(index, args.instance_id, shutdown_token))
+        threading.Thread(target=index.run, daemon=True).start()
+        state = {"pid": os.getpid(), "url": f"http://127.0.0.1:{server.server_port}", "scope": "local-only"}
         if args.state_file:
-            try:
-                if json.loads(args.state_file.read_text()).get("pid") == os.getpid():
-                    args.state_file.unlink()
-            except (OSError, ValueError):
-                pass
-        print(json.dumps({"event": "stopped", "pid": os.getpid(), "at": datetime.now(timezone.utc).isoformat()}), flush=True)
+            args.state_file.parent.mkdir(parents=True, exist_ok=True)
+            args.state_file.write_text(json.dumps(state), encoding="utf-8")
+        print(json.dumps(state), flush=True)
+        server.timeout = 0.25
+        try:
+            with shutdown_signals(index.stop):
+                while not index.stop.is_set():
+                    server.handle_request()
+        finally:
+            index.stop.set()
+            server.server_close()
+            if args.state_file:
+                try:
+                    if json.loads(args.state_file.read_text()).get("pid") == os.getpid():
+                        args.state_file.unlink()
+                except (OSError, ValueError):
+                    pass
+            print(json.dumps({"event": "stopped", "pid": os.getpid(), "at": datetime.now(timezone.utc).isoformat()}), flush=True)
 
 
 if __name__ == "__main__":

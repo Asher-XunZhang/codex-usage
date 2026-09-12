@@ -13,3 +13,5 @@
 ## Windows
 
 Windows 版使用 WPF/.NET 与 PSF 的 Windows embedded Python。运行时按固定版本与校验值获取，发行目录的 licenses/ 包含实际使用依赖的许可证。
+
+系统任务通知使用 Microsoft.Toolkit.Uwp.Notifications 7.1.3，并随包包含 Windows SDK/CsWinRT 的相关许可证。

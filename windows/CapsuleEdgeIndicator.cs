@@ -8,7 +8,7 @@ using System.Windows.Media;
 namespace CodexUsage;
 
 internal sealed record CapsuleEdgeDisplay(string Label, string Number, string Percent, string Name,
-    double? RemainingFraction, double? Fraction, bool Used, bool Stale, bool Light)
+    double? RemainingFraction, double? Fraction, bool Used, bool Stale, bool Light, string TaskStatus = "")
 {
     // A used-percent view must still turn red when little quota remains.
     public Color HealthColor => RemainingFraction is double remaining ? CapsuleColors.Color(remaining, Light) :
@@ -17,7 +17,7 @@ internal sealed record CapsuleEdgeDisplay(string Label, string Number, string Pe
     public static CapsuleEdgeDisplay From(JsonObject state)
     {
         var floating = state.O("settings").O("floating");
-        bool budget = floating.S("content", "usage") == "budget";
+        bool budget = floating.S("content", "usage") == "budget" || floating.S("content") == "monitor" && floating.S("quotaContent", "usage") == "budget";
         bool used = floating.S("edgeMetric", "remaining") == "used";
         bool light = !Theme.Resolve(state.O("settings"), "floating");
         var display = budget ? CapsuleBudgetDisplay.From(state) : null;
@@ -29,7 +29,7 @@ internal sealed record CapsuleEdgeDisplay(string Label, string Number, string Pe
         string name = budget ? display!.Name : CapsuleUsageDisplay.Name;
         string prefix = budget ? "预算" : CompactName(name);
         return new(prefix + (used ? "用" : "余"), number, number + (fraction is null ? "" : "%"), name,
-            remaining, fraction, used, budget ? display!.Stale : quota.B("stale", true), light);
+            remaining, fraction, used, budget ? display!.Stale : quota.B("stale", true), light, TaskMonitorVisual.SummaryStatus(state));
     }
 
     private static string CompactName(string name)
@@ -117,7 +117,7 @@ internal static class CapsuleEdgeIndicator
         var strokeBounds = new Rect(size); strokeBounds.Inflate(-pixel / 2, -pixel / 2);
         if (strokeBounds.Width > 0 && strokeBounds.Height > 0) dc.DrawGeometry(null, new Pen(border, pixel), Shape(strokeBounds, edge));
         bool vertical = edge is CapsuleEdge.Left or CapsuleEdge.Right;
-        Rect label, value, meter;
+        Rect label, value, meter, task;
         Point stale;
         if (vertical)
         {
@@ -125,16 +125,18 @@ internal static class CapsuleEdgeIndicator
             double contentWidth = Math.Max(1, size.Width - 6);
             label = new(contentLeft, size.Height * .19, contentWidth, 15);
             value = new(contentLeft, size.Height * .43, contentWidth, 19);
-            stale = new(contentLeft + contentWidth / 2, size.Height - 12);
-            meter = new(edge == CapsuleEdge.Left ? 1 : size.Width - 3, 10, 2, Math.Max(1, size.Height - 20));
+            stale = new(contentLeft + contentWidth - 2, size.Height - 19);
+            task = new(contentLeft + (contentWidth - 10) / 2, size.Height - 16, 10, 10);
+            meter = new(edge == CapsuleEdge.Left ? 1 : size.Width - 3, 10, 2, Math.Max(1, size.Height - 32));
         }
         else
         {
             double top = edge == CapsuleEdge.Top ? 6 : 3;
-            label = new(5, top, size.Width * .39, 18);
-            value = new(size.Width * .44, top - 1, size.Width * .46, 20);
-            stale = new(size.Width - 5, edge == CapsuleEdge.Top ? 8 : size.Height - 8);
-            meter = new(9, edge == CapsuleEdge.Top ? 1 : size.Height - 3, Math.Max(1, size.Width - 18), 2);
+            label = new(4, top, 23, 18);
+            value = new(28, top - 1, 31, 20);
+            stale = new(59, edge == CapsuleEdge.Top ? 7 : size.Height - 7);
+            task = new(size.Width - 14, top + 4, 10, 10);
+            meter = new(7, edge == CapsuleEdge.Top ? 1 : size.Height - 3, Math.Max(1, size.Width - 23), 2);
         }
         dc.DrawRoundedRectangle(track, null, meter, 1, 1);
         if (display.Fraction is double fraction && fraction > 0)
@@ -144,9 +146,10 @@ internal static class CapsuleEdgeIndicator
             else fill.Width *= fraction;
             dc.DrawRoundedRectangle(accent, null, fill, 1, 1);
         }
-        DrawText(dc, display.Label, label, vertical ? 8.5 : 9, LabelFont, secondary, dpi);
+        DrawText(dc, !vertical && display.Label.Length > 2 ? display.Used ? "已用" : "剩余" : display.Label, label, vertical ? 8.5 : 9, LabelFont, secondary, dpi);
         DrawText(dc, display.Percent, value, vertical ? 11.5 : 13, ValueFont, accent, dpi);
         if (display.Stale) dc.DrawEllipse(secondary, null, stale, 1.2, 1.2);
+        TaskMonitorGlyph.Draw(dc, task, display.TaskStatus, display.Light);
         dc.Pop();
     }
 

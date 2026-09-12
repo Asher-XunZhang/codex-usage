@@ -18,6 +18,109 @@ from scripts.fetch_windows_runtime import extract_runtime, load_manifest
 SDK_VERSION = '10.0.401'
 BACKEND_FILES = ('compact_snapshot.py', 'dashboard_data.py', 'dashboard_server.py',
                  'disk_index.py', 'parent_watch.py', 'token_usage.py', 'windows_job.py')
+SDK_NOTICES = (
+    ('WINDOWS-SDK-LICENSE.rtf', 'dd07eb178e00c6bba4148457fc00ff77cd4887eb521d504186fe59c9ec8bbe62'),
+    ('CSWINRT-LICENSE.txt', '9906940f61b1f0b533fa7d99baf55178b2808fbe113ea51dfbfad8572ccd5f2b'),
+)
+
+
+def dependency_notices(stage, assets_path, package_cache, root=ROOT):
+    """Copy licenses for the actual published dependency graph, without network access.
+
+    Windows SDK runtime DLLs come from a downloadDependency/runtimepack and are not
+    listed in project.assets.json's ordinary package libraries.
+    """
+    stage, package_cache = Path(stage), Path(package_cache).resolve()
+    assets = json.loads(Path(assets_path).read_text(encoding='utf-8'))
+    deps = json.loads((stage / 'CodexUsage.deps.json').read_text(encoding='utf-8'))
+    targets = deps['targets'][deps['runtimeTarget']['name']]
+    licenses = stage / 'licenses'
+    licenses.mkdir(exist_ok=True)
+    reports = []
+    for identity, library in sorted(deps['libraries'].items()):
+        kind = library.get('type')
+        if kind == 'project':
+            continue
+        package, release = identity.rsplit('/', 1)
+        if package.startswith('runtimepack.'):
+            package = package.removeprefix('runtimepack.')
+            if package.startswith(('Microsoft.NETCore.App.Runtime.', 'Microsoft.WindowsDesktop.App.Runtime.',
+                                   'Microsoft.AspNetCore.App.Runtime.')):
+                continue  # Covered by the bundled .NET license and third-party notices.
+        elif kind != 'package':
+            raise ValueError(f'Unrecognized published dependency kind: {identity}')
+        if any(not value or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_' for c in value)
+               for value in (package, release)) or package in ('.', '..') or release in ('.', '..'):
+            raise ValueError(f'Unsafe dependency identity: {identity}')
+        selected = targets.get(identity, {})
+        binaries = sorted({Path(name).name for group in ('runtime', 'native', 'runtimeTargets')
+                           for name in selected.get(group, {}) if name.lower().endswith(('.dll', '.exe'))})
+        if not binaries:
+            continue
+        for name in binaries:
+            if not (stage / name).is_file():
+                raise ValueError(f'Published dependency binary is missing: {name}')
+        directory = package_cache / package.lower() / release.lower()
+        if not directory.resolve().is_relative_to(package_cache):
+            raise ValueError(f'Package escapes the NuGet cache: {identity}')
+        package_files = list(regular_files(directory))
+        nuspec = directory / (package.lower() + '.nuspec')
+        metadata = ET.parse(nuspec).getroot().find('{*}metadata')
+        if metadata is None or metadata.findtext('{*}id') != package or metadata.findtext('{*}version') != release:
+            raise ValueError(f'Package metadata does not match published dependency: {identity}')
+        declaration = metadata.find('{*}license')
+        license_url = metadata.findtext('{*}licenseUrl') or ''
+        expression = declaration.text if declaration is not None and declaration.get('type') == 'expression' else ''
+        copied = []
+        if package == 'Microsoft.Windows.SDK.NET.Ref':
+            downloads = [item for framework in assets.get('project', {}).get('frameworks', {}).values()
+                         for item in framework.get('downloadDependencies', [])]
+            if not any(item.get('name') == package and item.get('version') == f'[{release}, {release}]' for item in downloads):
+                raise ValueError('Published Windows SDK runtime pack does not match restored assets')
+            for name, expected in SDK_NOTICES:
+                source = root / 'resources/licenses' / name
+                if not source.is_file() or digest_file(source) != expected:
+                    raise ValueError(f'Required pinned SDK distribution license is missing or changed: {name}')
+                shutil.copy2(source, licenses / name)
+                copied.append(name)
+        else:
+            restored = assets.get('libraries', {}).get(identity)
+            if not restored or restored.get('type') != 'package':
+                raise ValueError(f'Published package is absent from restored assets: {identity}')
+            candidates = [file for file in package_files if file.parent == directory and
+                          (file.name.lower().startswith(('license', 'notice', 'third-party', 'thirdparty')))]
+            if declaration is not None and declaration.get('type') == 'file':
+                declared = directory / (declaration.text or '')
+                if declared.resolve() not in {file.resolve() for file in package_files}:
+                    raise ValueError(f'Declared package license is unavailable: {identity}')
+                if declared not in candidates:
+                    candidates.append(declared)
+            if not any(file.name.lower().startswith('license') or
+                       declaration is not None and declaration.get('type') == 'file' and file == declared for file in candidates):
+                raise ValueError(f'Published package has no bundled license; review before distribution: {identity}')
+            for source in candidates:
+                target = f'{package}-{release}-{source.name}'
+                shutil.copy2(source, licenses / target)
+                copied.append(target)
+        # Preserve the publisher's original copyright, license declaration and repository metadata.
+        metadata_target = f'{package}-{release}.nuspec.xml'
+        shutil.copy2(nuspec, licenses / metadata_target)
+        reports.append(dict(package=package, version=release, binaries=binaries, licenses=copied,
+                            license_expression=expression, license_url=license_url, metadata=metadata_target))
+    return reports
+
+
+def dependency_notice_text(reports):
+    lines = ['\n## Additional Windows components\n']
+    for item in reports:
+        files = ', '.join(f'`{name}`' for name in item['binaries'])
+        notices = ', '.join(f'`licenses/{name}`' for name in item['licenses'])
+        terms = item['license_expression'] or 'publisher license terms'
+        lines.append(f"- {item['package']} {item['version']}: {files}. {terms}; {notices}. "
+                     f"Publisher metadata: `licenses/{item['metadata']}`. {item['license_url']}\n")
+    lines.append('- `WinRT.Runtime.dll` is the C#/WinRT support runtime (MIT); its license is included separately. '
+                 'The Windows SDK package license also accompanies `Microsoft.Windows.SDK.NET.dll`.\n')
+    return ''.join(lines)
 
 
 def version(root=ROOT):
@@ -56,6 +159,8 @@ def owned_output(path):
 
 def build_sources(root=ROOT):
     result = {'backend/' + name: digest_file(root / 'backend' / name) for name in BACKEND_FILES}
+    for source in regular_files(root / 'resources/licenses'):
+        result[source.relative_to(root).as_posix()] = digest_file(source)
     windows = root / 'windows'
     if windows.is_symlink() or getattr(windows.lstat(), 'st_file_attributes', 0) & 0x400:
         raise ValueError('Windows source directory cannot be a reparse point')
@@ -119,6 +224,8 @@ def build(output, dotnet=None):
                 raise ValueError(f'Required distribution license is missing: {source}')
             shutil.copy2(source, licenses / target)
         shutil.copy2(ROOT / 'resources/runtimes/windows-manifest.json', stage / 'python-runtime.json')
+        dependencies = dependency_notices(stage, ROOT / 'windows/obj/project.assets.json',
+                                         ROOT / '.local/nuget-packages')
         (stage / 'THIRD-PARTY.md').write_text(
             '# Windows runtime notices\n\nThis app bundles Microsoft .NET 10 Windows Desktop and '
             'PSF CPython 3.14.7 (x64). No system installation or pip packages are required.\n\n'
@@ -126,13 +233,14 @@ def build(output, dotnet=None):
             '- Python: https://www.python.org/downloads/release/python-3147/\n'
             '- Original license and notices: `licenses/`; Python also includes `python/LICENSE.txt`.\n'
             '- The Python archive is SHA-256 verified before extraction. Its `_pth` only adds `../backend`.\n'
-            '- This build has not been Authenticode signed. Checksums verify integrity, not publisher identity.\n',
+            '- This build has not been Authenticode signed. Checksums verify integrity, not publisher identity.\n'
+            + dependency_notice_text(dependencies),
             encoding='utf-8')
         frameworks = json.loads((stage / 'CodexUsage.runtimeconfig.json').read_text(encoding='utf-8'))['runtimeOptions']['includedFrameworks']
         if build_sources() != sources:
             raise ValueError('Source changed during the build; build again after edits finish')
         manifest = dict(version=version(), architecture='win-x64', dotnet_sdk=SDK_VERSION,
-                        dotnet_frameworks=frameworks, sources=sources,
+                        dotnet_frameworks=frameworks, dependencies=dependencies, sources=sources,
                         python=entry, files={p.relative_to(stage).as_posix(): digest_file(p)
                                              for p in regular_files(stage)})
         (stage / 'BUILD-MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')

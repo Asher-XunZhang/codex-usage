@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 
 namespace CodexUsage;
 
@@ -34,7 +37,8 @@ internal static class CapsuleNativeKeyboardTests
     {
         var app = Application.Current; var shutdown = app.ShutdownMode; app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var checks = new JsonArray(); var events = new JsonArray(); int mainActions = 0, keepActions = 0;
-        var window = new CapsuleWindow((command, _) => { if (command == "main") mainActions++; if (command == "keepExpanded") keepActions++; return Task.CompletedTask; }, readPointer: () => null)
+        TaskCompletionSource? delayedMenuCommand = null;
+        var window = new CapsuleWindow((command, _) => { if (command == "main") mainActions++; if (command == "keepExpanded") keepActions++; return command == "period" && delayedMenuCommand != null ? delayedMenuCommand.Task : Task.CompletedTask; }, readPointer: () => null)
         { ShowActivated = false, Topmost = false };
         JsonObject Snapshot(string phase) => J.Obj(("phase", phase), ("at", Environment.TickCount),
             ("focused", Keyboard.FocusedElement?.GetType().Name), ("windowFocused", window.IsKeyboardFocused),
@@ -125,6 +129,46 @@ internal static class CapsuleNativeKeyboardTests
             Check(ReferenceEquals(Keyboard.FocusedElement, window), "post-drag-fixture-focus-is-on-window-container");
             Check(NativeKey(Key.Tab), "native-tab-remains-handled-after-drag"); await Task.Delay(70);
             Check(surface.KeyboardInteraction && surface.KeyboardAction == "contentUsage", "drag-does-not-strand-keyboard-focus-on-container");
+            // Force the exact race instead of hoping a short delay reproduces it:
+            // production Closed has queued its focus return, then a second Closed
+            // handler performs the next user interaction before that operation runs.
+            surface.FocusAction("period", true);
+            await window.ShowMenu("period");
+            var cancelledMenu = window.ActiveMenu!;
+            var advancedAfterCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancelledMenu.Closed += async (_, _) =>
+            {
+                try
+                {
+                    Check(window.ActiveMenu == null && !window.InteractionActive, "queued-restore-race-popup-already-released-interaction");
+                    window.Press(true); var anchor = window.CompactPixelBounds;
+                    var start = window.BeginDrag(new Point(anchor.X + anchor.Width / 2, anchor.Y + anchor.Height / 2));
+                    window.MoveBy(8, 4, start, null); await window.FinishDrag();
+                    surface.EndKeyboardNavigation(); FocusContainer();
+                    Check(NativeKey(Key.Tab) && surface.KeyboardAction == "contentUsage", "new-native-tab-wins-before-queued-menu-restore");
+                    advancedAfterCancel.TrySetResult();
+                }
+                catch (Exception e) { advancedAfterCancel.TrySetException(e); }
+            };
+            cancelledMenu.IsOpen = false;
+            await advancedAfterCancel.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            Check(surface.KeyboardInteraction && surface.KeyboardAction == "contentUsage", "queued-cancel-restore-cannot-overwrite-new-drag-and-tab");
+
+            // A selected menu command may take arbitrarily long to save. Tab is
+            // usable after the popup closes; completing that old save must not
+            // replace the user's newer virtual focus with its old trigger.
+            delayedMenuCommand = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            surface.FocusAction("period", true); await window.ShowMenu("period");
+            var savingMenu = window.ActiveMenu!;
+            savingMenu.Items.OfType<MenuItem>().First().RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await Wait(() => window.ActiveMenu == null && !window.InteractionActive, "pending-menu-save-does-not-block-new-keyboard-input");
+            surface.EndKeyboardNavigation(); FocusContainer();
+            Check(NativeKey(Key.Tab) && surface.KeyboardAction == "contentUsage", "native-tab-advances-while-old-menu-save-is-pending");
+            delayedMenuCommand.SetResult();
+            await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+            Check(surface.KeyboardInteraction && surface.KeyboardAction == "contentUsage", "late-menu-save-cannot-overwrite-new-keyboard-focus");
+            delayedMenuCommand = null;
             surface.FocusAction("details", true); Check(NativeKey(Key.Enter) && mainActions == 1, "native-enter-executes-current-primary-action-once");
             return J.Obj(("success", true), ("checks", checks), ("events", events), ("scope", "Activated synthetic WPF window; native MSG translated through HwndSource, thread-local modifier state restored, no SendInput, cursor movement or user state."));
         }

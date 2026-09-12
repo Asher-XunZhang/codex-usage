@@ -31,6 +31,8 @@ jobs:
         run: build/windows-x64/python/python.exe -E -s -B test.py
       - name: Host and panel lifecycle with isolated synthetic data
         run: python -B scripts/test_windows_lifecycle.py --app build/windows-x64/CodexUsage.exe --output build/windows-lifecycle.json
+      - name: Task monitor lifecycle and reminders with isolated synthetic data
+        run: python -B scripts/test_windows_monitor.py --app build/windows-x64/CodexUsage.exe --output build/windows-monitor.json
       - name: Package offline portable application and source
         run: python -B scripts/package_windows.py
       - name: Verify distribution and offline synthetic-data smoke
@@ -50,6 +52,7 @@ jobs:
             dist/*-windows-x64.zip.sha256
             build/windows-verification.json
             build/windows-lifecycle.json
+            build/windows-monitor.json
           if-no-files-found: error
 
   shared-macos:

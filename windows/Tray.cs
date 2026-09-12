@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -102,6 +103,7 @@ internal sealed class Tray : IDisposable
     private System.Windows.Point lastAnchor;
     private readonly TrayClickState clicks;
     private JsonObject snapshot = new();
+    private string iconMarker = "";
     internal bool PreviewVisible => preview?.IsVisible == true;
     internal TrayPreview? PreviewWindow => preview;
     internal bool IconVisible => visible;
@@ -109,6 +111,10 @@ internal sealed class Tray : IDisposable
     internal bool PendingClick => clicks.PendingClick;
     private readonly DispatcherTimer clickTimer = new();
     public Action? OpenMain, RefreshData, OpenSettings, BalloonShown, BalloonClicked, BalloonFinished;
+    internal Action<string?>? OpenMonitor;
+    internal Action? OpenMonitorSettings;
+    internal Func<JsonObject, Task<JsonObject>>? MonitorRequest;
+    internal bool IsViewingMonitor(string taskID) => detail?.IsViewingMonitor(taskID) == true;
     public Func<ContextMenu>? Menu;
     private ContextMenu? openMenu;
     public Tray()
@@ -143,11 +149,36 @@ internal sealed class Tray : IDisposable
         snapshot = state;
         if (preview?.IsVisible == true) preview.Update(snapshot);
         if (detail?.IsVisible == true) detail.Update(snapshot);
+        var summary = state.O("monitor").O("summary");
+        string marker = summary.I("attention") > 0 ? "attention" : summary.I("unread") > 0 ? "unread" : "";
+        bool iconChanged = marker != iconMarker;
+        if (iconChanged) UpdateIcon(marker);
         string text = title.Length > 127 ? title[..127] : title;
-        if (text == data.Tip && visible == desired) return;
+        if (text == data.Tip && visible == desired && !iconChanged) return;
         data.Tip = text;
         if (desired && !visible) SetVisible(true);
-        if (visible) { data.Flags = 4; Shell_NotifyIcon(1, ref data); }
+        if (visible) { data.Flags = iconChanged ? 6u : 4u; Shell_NotifyIcon(1, ref data); }
+    }
+    private void UpdateIcon(string marker)
+    {
+        using var bitmap = new Bitmap(32, 32);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var track = new Pen(System.Drawing.Color.FromArgb(65, 86, 76), 4);
+            using var arc = new Pen(System.Drawing.Color.FromArgb(53, 222, 148), 4) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawEllipse(track, 4, 4, 24, 24); g.DrawArc(arc, 4, 4, 24, 24, -90, 270);
+            using var green = new SolidBrush(System.Drawing.Color.FromArgb(87, 230, 178)); g.FillEllipse(green, 12, 12, 8, 8);
+            if (marker.Length > 0)
+            {
+                using var ink = new SolidBrush(marker == "attention" ? System.Drawing.Color.FromArgb(245, 185, 65) : System.Drawing.Color.FromArgb(98, 172, 255));
+                using var outline = new Pen(System.Drawing.Color.FromArgb(24, 35, 28), 2);
+                if (marker == "attention") { Point[] points = [new(25, 18), new(31, 24), new(25, 30), new(19, 24)]; g.FillPolygon(ink, points); g.DrawPolygon(outline, points); }
+                else { g.FillEllipse(ink, 20, 20, 11, 11); g.DrawEllipse(outline, 20, 20, 11, 11); }
+            }
+        }
+        var previous = data.Icon; data.Icon = bitmap.GetHicon(); iconMarker = marker;
+        if (previous != IntPtr.Zero) DestroyIcon(previous);
     }
     public bool Notify(string title, string body)
     {
@@ -193,7 +224,8 @@ internal sealed class Tray : IDisposable
     internal TrayDetailWindow EnsureDetail()
     {
         if (detail != null) return detail;
-        var created = new TrayDetailWindow { OpenMain = () => OpenMain?.Invoke(), RefreshData = () => RefreshData?.Invoke(), OpenSettings = () => OpenSettings?.Invoke(), Dismissed = clicks.Dismissed };
+        var created = new TrayDetailWindow { OpenMain = () => OpenMain?.Invoke(), RefreshData = () => RefreshData?.Invoke(), OpenSettings = () => OpenSettings?.Invoke(),
+            OpenMonitor = id => OpenMonitor?.Invoke(id), OpenMonitorSettings = () => OpenMonitorSettings?.Invoke(), MonitorRequest = request => MonitorRequest?.Invoke(request) ?? Task.FromResult(snapshot), Dismissed = clicks.Dismissed };
         created.Closed += (_, _) => { if (ReferenceEquals(detail, created)) detail = null; };
         return detail = created;
     }

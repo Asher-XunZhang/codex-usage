@@ -151,13 +151,17 @@ internal sealed class CapsuleSurface : FrameworkElement
     private static readonly SolidColorBrush[] LightPalette = [Theme.Color("#F5F5F2"), Theme.Color("#202823"), Theme.Color("#626C67"), Theme.Color("#047857"), Theme.Color("#DCE3DD"), Theme.Color("#D6DDD7")];
     public bool Light => !Theme.Resolve(State.O("settings"), "floating");
     public bool BudgetMode => State.O("settings").O("floating").S("content", "usage") == "budget";
+    public bool MonitorMode => State.O("settings").O("floating").S("content", "usage") == "monitor";
+    internal bool BudgetQuota => BudgetMode || MonitorMode && State.O("settings").O("floating").S("quotaContent", "usage") == "budget";
+    private string SelectedContentAction => MonitorMode ? "contentMonitor" : BudgetMode ? "contentBudget" : "contentUsage";
+    internal static Rect MonitorTaskBounds(int index) => new(16, 140 + index * 83, 304, 77);
     private JsonObject Budget => State.O("budgets").A("summaries").Rows().FirstOrDefault(x => x.S("id") == State.O("settings").O("floating").S("budgetID")) ?? new();
     private JsonObject Summary => State.O("filtered").O("summary");
     private JsonObject Quota => State.O("quota");
     private CapsuleBudgetDisplay budgetDisplay = CapsuleBudgetDisplay.From(new());
-    private double? Fraction => BudgetMode ? budgetDisplay.Fraction : CapsuleUsageDisplay.Fraction(State);
-    private string DisplayName => BudgetMode ? budgetDisplay.Name : CapsuleUsageDisplay.Name;
-    internal string TopValue => BudgetMode ? BudgetBalance : J.Compact(State.O("today").O("summary").N("total_tokens"));
+    private double? Fraction => BudgetQuota ? budgetDisplay.Fraction : CapsuleUsageDisplay.Fraction(State);
+    private string DisplayName => BudgetQuota ? budgetDisplay.Name : CapsuleUsageDisplay.Name;
+    internal string TopValue => BudgetQuota ? BudgetBalance : J.Compact(State.O("today").O("summary").N("total_tokens"));
     private string Total => TopValue;
     private string BudgetBalance
     {
@@ -189,7 +193,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     internal void WindowStateChanged() { capsulePeer?.NotifyStateChanges(); Redraw(); }
     private string Range => BudgetMode ? budgetDisplay.Caption : State.O("settings").O("floating").S("days", "1") switch { "1" => "今日", "all" => "全部", var d => d + "天" };
-    private bool Stale => BudgetMode ? budgetDisplay.Stale : Quota.B("stale", true);
+    private bool Stale => BudgetQuota ? budgetDisplay.Stale : Quota.B("stale", true);
     private string? hover, down;
     private string? keyboardAction;
     private bool keyboardFocusVisible, settingFocus;
@@ -206,6 +210,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     private bool dragged;
     public static readonly DependencyProperty LevelProperty = DependencyProperty.Register(nameof(Level), typeof(double), typeof(CapsuleSurface), new FrameworkPropertyMetadata(-1d, (o, _) => ((CapsuleSurface)o).Redraw()));
     public double Level { get => (double)GetValue(LevelProperty); set => SetValue(LevelProperty, value); }
+    private double levelTarget = -1;
     public CapsuleSurface(CapsuleWindow owner)
     {
         window = owner; AddVisualChild(drawing); Focusable = true; Cursor = Cursors.Hand;
@@ -241,8 +246,11 @@ internal sealed class CapsuleSurface : FrameworkElement
     {
         expandedDrawing = null; interactionError = null;
         double previous = Level; State = state; budgetDisplay = CapsuleBudgetDisplay.From(state); double next = Fraction is double d && double.IsFinite(d) ? Math.Clamp(d, 0, 1) : -1;
-        if (Math.Abs(previous - next) > .000001)
+        // A task-state refresh can arrive while the independent quota tween is
+        // still running. Compare its destination, not the currently animated value.
+        if (Math.Abs(levelTarget - next) > .000001)
         {
+            levelTarget = next;
             BeginAnimation(LevelProperty, null); Level = next;
             if (previous >= 0 && next >= 0 && RingVisible && !window.DockMotionActive && IsVisible && SystemParameters.ClientAreaAnimation) BeginAnimation(LevelProperty, new DoubleAnimation(previous, next, TimeSpan.FromSeconds(.22)) { FillBehavior = FillBehavior.Stop, EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut } });
         }
@@ -251,7 +259,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     private void UpdateAccessibility()
     {
         accessibleEdge = Edge;
-        string help = BudgetMode ? $"预算 {DisplayName}，剩余 {budgetDisplay.Remaining}，已用 {budgetDisplay.Used}，{budgetDisplay.Status}，{budgetDisplay.Scope}" :
+        string help = BudgetQuota ? $"预算 {DisplayName}，剩余 {budgetDisplay.Remaining}，已用 {budgetDisplay.Used}，{budgetDisplay.Status}，{budgetDisplay.Scope}" :
             $"账号周剩余 {Percent()}；本地今日 {UsageNumbers.Exact(State.O("today").O("summary")["total_tokens"])} tokens；当前范围 {Range}，{FilterSummary}，{UsageNumbers.Exact(Summary["total_tokens"])} tokens；输入 {UsageNumbers.Exact(Summary["input_tokens"])}，输出 {UsageNumbers.Exact(Summary["output_tokens"])}";
         string name = "Token 用量胶囊";
         if (Edge != CapsuleEdge.None)
@@ -262,6 +270,8 @@ internal sealed class CapsuleSurface : FrameworkElement
             help = name + (display.Stale ? "，上次记录，数据可能已过期。" : "，已更新。") + help;
         }
         else if (Stale) help += "；上次记录，数据可能已过期";
+        if (TaskMonitorVisual.SummaryStatus(State).Length > 0)
+            help += "；" + TaskMonitorVisual.FocusText(State) + "，" + TaskMonitorGlyph.Label(TaskMonitorVisual.SummaryStatus(State)) + "；" + TaskMonitorVisual.SummaryText(State);
         help += "；Enter 或空格执行当前项，Tab 切换操作，Shift+F10 打开菜单，Ctrl+Space 切换保持展开";
         AutomationProperties.SetName(this, name); AutomationProperties.SetHelpText(this, help);
     }
@@ -274,6 +284,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     internal void FocusAction(string name, bool keyboard)
     {
+        window.NewFocusIntent();
         keyboardFocusVisible = keyboard;
         if (keyboard) window.BeginKeyboardInteraction();
         keyboardAction = Regions().Any(x => x.name == name && ActionEnabled(x.name)) ? name : KeyboardOrder().FirstOrDefault();
@@ -284,6 +295,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     internal void EndKeyboardNavigation()
     {
+        window.NewFocusIntent();
         keyboardFocusVisible = false; keyboardAction = "details"; capsulePeer?.NotifyFocusChanged(keyboardAction); Redraw();
     }
     internal static Key InputKey(Key key, Key systemKey, Key imeKey) => key == Key.System ? systemKey : key == Key.ImeProcessed ? imeKey : key;
@@ -294,6 +306,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         key == Key.Apps || key == Key.F10 && modifiers == ModifierKeys.Shift;
     internal async Task<bool> HandleKeyboardAsync(Key key, ModifierKeys modifiers)
     {
+        window.NewFocusIntent();
         if (key == Key.Tab && (modifiers & ~ModifierKeys.Shift) == ModifierKeys.None)
         {
             window.BeginKeyboardInteraction();
@@ -399,10 +412,27 @@ internal sealed class CapsuleSurface : FrameworkElement
         var r = new List<(string, string, Rect)> { ("details", "打开主面板", header) };
         if (!includeExpanded && Expansion < .999) { r.Add(("context", "浮窗功能菜单", header)); return r; }
         r.AddRange(new (string, string, Rect)[] {
-            ("contentUsage","用量",new(16,62,52,26)),("contentBudget","预算",new(68,62,52,26)),
+            ("contentUsage","用量",new(16,62,40,26)),("contentBudget","预算",new(56,62,40,26)),
+            ("contentMonitor","任务监控，" + TaskMonitorVisual.SummaryText(State),new(96,62,62,26)),
             ("keepExpanded","保持展开",new(166,62,90,26)),("more","更多浮窗操作",new(266,62,54,26)),
-            ("updateStatus","数据更新状态与重试",new(16,334,232,32)),("refresh","刷新本地用量与账号额度",new(258,340,62,26)),
             ("main","打开主面板",new(16,375,150,24)),("collapse","收起为圆环",new(246,375,74,24))});
+        if (MonitorMode)
+        {
+            var tasks = TaskMonitorVisual.Featured(State);
+            for (int index = 0; index < tasks.Count; index++)
+            {
+                var task = tasks[index];
+                r.Add(("monitorDetail:" + task.S("id"), "查看任务，" + task.S("title") + "，" + TaskMonitorGlyph.Label(task.S("status")) + "，" + TaskMonitorVisual.Metadata(task), new(263, MonitorTaskBounds(index).Top + 12, 49, 28)));
+            }
+            r.Add(("monitorManage", tasks.Count == 0 ? "选择正在执行的任务" : "查看全部任务与消息", new(16, 306, 304, 28)));
+            r.Add(("monitorSettings", "任务提醒设置，" + TaskMonitorVisual.SourceText(State), new(16, 337, 204, 29)));
+            r.Add(("monitorCheck", "检查监控连接", new(230, 339, 90, 27)));
+        }
+        else
+        {
+            r.Add(("updateStatus", "数据更新状态与重试", new(16, 334, 232, 32)));
+            r.Add(("refresh", "刷新本地用量与账号额度", new(258, 340, 62, 26)));
+        }
         if (BudgetMode)
         {
             r.Add(("budget", "选择预算，当前 " + budgetDisplay.Name, new(16, 100, 188, 28)));
@@ -410,7 +440,7 @@ internal sealed class CapsuleSurface : FrameworkElement
             r.Add(("budgetScope", "预算范围，只读，" + budgetDisplay.Scope, new(16, 169, 304, 22)));
             r.Add((BudgetPaused ? "budgetResume" : "budgetPause", BudgetPaused ? "恢复预算提醒" : "暂停预算提醒", new(214, 290, 106, 26)));
         }
-        else
+        else if (!MonitorMode)
         {
             r.Add(("period", "本地统计范围，" + Range, new(122, 142, 114, 26)));
             r.Add(("filters", "模型与任务筛选，" + FilterSummary, new(246, 142, 74, 26)));
@@ -540,7 +570,8 @@ internal sealed class CapsuleSurface : FrameworkElement
             }
             Text(DisplayName, w / 2 - 23, 10, 46, 8.5, secondary, alignment: TextAlignment.Center);
             Text(Total, w / 2 - 25, 43, 50, 10, ink, alignment: TextAlignment.Center);
-            Text(BudgetMode ? "余量" : "今日", w / 2 - 20, 57, 40, 8.5, secondary, alignment: TextAlignment.Center);
+            TextInRect(BudgetQuota ? "余量" : "今日", new(w / 2 - 15, 56, 19, 11), 8.5, secondary);
+            TaskMonitorGlyph.Draw(dc, new(w / 2 + 6, 56.5, 10, 10), TaskMonitorVisual.SummaryStatus(State), light);
             dc.Pop(); dc.Pop();
         }
         if (morph.DetailsAlpha > 0)
@@ -552,8 +583,8 @@ internal sealed class CapsuleSurface : FrameworkElement
             dc.DrawRectangle(Translucent(ink, .045), null, new(2.5, 2.5, w - 5, 47));
             if (Level > 0) { var liquid = new LinearGradientBrush(light ? System.Windows.Media.Color.FromRgb(209, 240, 222) : System.Windows.Media.Color.FromRgb(14, 97, 66), light ? System.Windows.Media.Color.FromRgb(189, 224, 204) : System.Windows.Media.Color.FromRgb(5, 51, 38), 90); dc.DrawRectangle(liquid, null, new(2.5, 2.5, (w - 5) * Level, 47)); }
             dc.Pop();
-            Text((BudgetMode ? "预算剩余" : DisplayName) + (Stale ? " · 上次" : ""), 85, 21, 90, 10, secondary);
-            Text(BudgetMode ? "剩余" : "今日", 181, 21, 34, 10, secondary); Text(Total, 222, 14, 94, 18, ink, alignment: TextAlignment.Right);
+            Text((BudgetQuota ? (MonitorMode ? budgetDisplay.Name : "预算剩余") : DisplayName) + (Stale ? " · 上次" : ""), 85, 21, 90, 10, secondary);
+            Text(BudgetQuota ? "剩余" : "今日", 181, 21, 34, 10, secondary); Text(Total, 222, 14, 94, 18, ink, alignment: TextAlignment.Right);
             var key = (window.KeepsExpanded, light, FiltersOpen, hover, down, pixelsPerDip, CaptureTextBounds);
             if (expandedDrawing == null || expandedKey != key)
             {
@@ -605,14 +636,51 @@ internal sealed class CapsuleSurface : FrameworkElement
                 for (int i = 10; i >= 1; i--) { var c = Translucent(accent, .012 + .003 * (10 - i)); var outer = glow; outer.Inflate(i, i); dc.DrawRoundedRectangle(null, new Pen(c, 2), outer, 8 + i, 8 + i); }
                 if (down == r.name) Box(glow.X, glow.Y, glow.Width, glow.Height, .12);
             }
-            var navigation = Rect.Union(ActionRect("contentUsage"), ActionRect("contentBudget"));
-            var selectedNavigation = ActionRect(BudgetMode ? "contentBudget" : "contentUsage"); selectedNavigation.Inflate(-1, -1);
+            var navigation = Rect.Union(ActionRect("contentUsage"), ActionRect("contentMonitor"));
+            var selectedNavigation = ActionRect(SelectedContentAction); selectedNavigation.Inflate(-1, -1);
             Box(navigation.X, navigation.Y, navigation.Width, navigation.Height, .06, 8); Box(selectedNavigation.X, selectedNavigation.Y, selectedNavigation.Width, selectedNavigation.Height, .12, 7);
-            ActionText("contentUsage", "用量", 11, BudgetMode ? secondary : accent);
+            ActionText("contentUsage", "用量", 11, BudgetMode || MonitorMode ? secondary : accent, padding: 4);
             ActionText("contentBudget", "预算", 11, BudgetMode ? accent : secondary);
+            int unread = State.O("monitor").O("summary").I("unread");
+            ActionText("contentMonitor", "监控" + (unread > 0 ? " " + (unread > 9 ? "9+" : unread.ToString(CultureInfo.InvariantCulture)) : ""), 10, MonitorMode ? accent : secondary, padding: 3);
             ActionText("keepExpanded", (window.KeepsExpanded ? "✓ " : "") + "保持展开", 10, window.KeepsExpanded ? accent : ink);
             ActionText("more", "更多 ···", 10, ink, padding: 0);
-            if (BudgetMode)
+            if (MonitorMode)
+            {
+                Text(TaskMonitorVisual.SummaryText(State), 20, 103, 296, 10, ink);
+                Text(TaskMonitorVisual.FocusText(State), 20, 120, 296, 9, secondary);
+                var tasks = TaskMonitorVisual.Featured(State);
+                if (tasks.Count == 0)
+                {
+                    TaskMonitorGlyph.Draw(dc, new(157, 169, 22, 22), "idle", light);
+                    TextInRect("选择正在执行的任务", new(28, 206, 280, 21), 13, ink);
+                    TextInRect("本轮结束后提醒你", new(28, 232, 280, 18), 10, secondary);
+                    TextInRect("监控与用量筛选互相独立", new(28, 260, 280, 17), 9, secondary);
+                }
+                for (int index = 0; index < tasks.Count; index++)
+                {
+                    var task = tasks[index]; var card = MonitorTaskBounds(index); double top = card.Top;
+                    Box(card.X, card.Y, card.Width, card.Height, .045);
+                    TaskMonitorGlyph.Draw(dc, new(26, top + 10, 11, 11), task.S("status"), light);
+                    Text(TaskMonitorGlyph.Label(task.S("status")), 43, top + 8, 207, 10, TaskMonitorGlyph.Brush(task.S("status"), light));
+                    var title = new FormattedText(task.S("title", "未命名任务"), CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight,
+                        RegularFont, 11, ink, pixelsPerDip) { MaxTextWidth = 227, MaxLineCount = 2, LineHeight = 14, Trimming = TextTrimming.CharacterEllipsis };
+                    dc.DrawText(title, new(26, top + 25));
+                    if (CaptureTextBounds)
+                    {
+                        var box = title.BuildGeometry(new()).Bounds;
+                        if (!box.IsEmpty) { box.Offset(26, top + 25); expandedTextBounds.Add((task.S("title", "未命名任务"), box)); }
+                    }
+                    Text(TaskMonitorVisual.Metadata(task), 26, top + 58, 276, 9, secondary);
+                    ActionText("monitorDetail:" + task.S("id"), "查看", 10, accent, padding: 4);
+                }
+                ActionBox("monitorManage", .055); ActionText("monitorManage", tasks.Count == 0 ? "选择任务" : "查看全部任务与消息", 10, accent);
+                var monitorSource = ActionRect("monitorSettings");
+                TextInRect(interactionError ?? TaskMonitorVisual.SourceText(State), new(monitorSource.X, monitorSource.Y, monitorSource.Width, 15), 9, secondary, TextAlignment.Left, 4);
+                TextInRect("提醒设置", new(monitorSource.X, monitorSource.Y + 15, monitorSource.Width, 14), 9, accent, TextAlignment.Left, 4);
+                ActionBox("monitorCheck", .06); ActionText("monitorCheck", "检查连接", 10, accent, padding: 3);
+            }
+            else if (BudgetMode)
             {
                 ActionBox("budget", .055); var selector = ActionRect("budget");
                 TextInRect(budgetDisplay.Name, new Rect(selector.X + 10, selector.Y, selector.Width - 37, selector.Height), 11, accent, TextAlignment.Left);
@@ -660,10 +728,13 @@ internal sealed class CapsuleSurface : FrameworkElement
                 Text(J.Compact(Summary.N("input_tokens")), 20, 290, 142, 17, ink); Text(J.Compact(Summary.N("output_tokens")), 180, 290, 140, 17, ink);
                 Text(interactionError ?? "其中缓存 " + J.Compact(Summary.N("cached_input_tokens")), 20, 317, 296, 10, secondary);
             }
-            var statusArea = ActionRect("updateStatus"); double rowHeight = statusArea.Height / 2;
-            TextInRect(SourceStamp("local"), new Rect(statusArea.X, statusArea.Y, statusArea.Width, rowHeight), 9, secondary, TextAlignment.Left, 4);
-            TextInRect(SourceStamp("quota"), new Rect(statusArea.X, statusArea.Y + rowHeight, statusArea.Width, rowHeight), 9, secondary, TextAlignment.Left, 4);
-            ActionBox("refresh", .06); ActionText("refresh", State.B("busy") ? "更新中" : "刷新", 10, State.B("busy") ? secondary : accent, padding: 3);
+            if (!MonitorMode)
+            {
+                var statusArea = ActionRect("updateStatus"); double rowHeight = statusArea.Height / 2;
+                TextInRect(SourceStamp("local"), new Rect(statusArea.X, statusArea.Y, statusArea.Width, rowHeight), 9, secondary, TextAlignment.Left, 4);
+                TextInRect(SourceStamp("quota"), new Rect(statusArea.X, statusArea.Y + rowHeight, statusArea.Width, rowHeight), 9, secondary, TextAlignment.Left, 4);
+                ActionBox("refresh", .06); ActionText("refresh", State.B("busy") ? "更新中" : "刷新", 10, State.B("busy") ? secondary : accent, padding: 3);
+            }
             dc.DrawLine(new Pen(border, 1), new(16, 371), new(320, 371));
             ActionBox("main", .08); ActionText("main", "打开主面板", 11, accent, padding: 12);
             ActionText("collapse", "收起", 11, secondary, padding: 0);
@@ -692,7 +763,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         public override object? GetPattern(PatternInterface pattern) => pattern == PatternInterface.Selection ? this : base.GetPattern(pattern);
         public bool CanSelectMultiple => false;
         public bool IsSelectionRequired => owner.Expansion >= .999 && owner.Edge == CapsuleEdge.None;
-        public IRawElementProviderSimple[] GetSelection() => IsSelectionRequired ? [ProviderFromPeer(Action(owner.BudgetMode ? "contentBudget" : "contentUsage"))] : [];
+        public IRawElementProviderSimple[] GetSelection() => IsSelectionRequired ? [ProviderFromPeer(Action(owner.SelectedContentAction))] : [];
         internal void NotifyStateChanges()
         {
             // A drawn surface has no WPF child elements to invalidate this cache
@@ -718,7 +789,7 @@ internal sealed class CapsuleSurface : FrameworkElement
             selected = IsSelected; toggled = owner.window.KeepsExpanded; filtersExpanded = owner.FiltersOpen;
         }
         private (string name, string label, Rect bounds)? Region => owner.Regions().Where(x => x.name == name).Select(x => ((string name, string label, Rect bounds)?)x).FirstOrDefault();
-        private bool IsPage => name is "contentUsage" or "contentBudget";
+        private bool IsPage => name is "contentUsage" or "contentBudget" or "contentMonitor";
         public void Invoke()
         {
             if (!IsEnabledCore()) throw new ElementNotEnabledException();
@@ -729,7 +800,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         public ExpandCollapseState ExpandCollapseState => owner.FiltersOpen ? ExpandCollapseState.Expanded : ExpandCollapseState.Collapsed;
         public void Expand() { if (!owner.FiltersOpen) Invoke(); }
         public void Collapse() { if (owner.FiltersOpen) Invoke(); }
-        public bool IsSelected => name == "contentBudget" ? owner.BudgetMode : name == "contentUsage" && !owner.BudgetMode;
+        public bool IsSelected => IsPage && name == owner.SelectedContentAction;
         public IRawElementProviderSimple SelectionContainer => ProviderFromPeer(owner.capsulePeer!);
         public void Select() { if (!IsSelected) Invoke(); }
         public void AddToSelection() => Select();

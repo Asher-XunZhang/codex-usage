@@ -64,7 +64,7 @@ internal static class CapsuleAccessibilityTests
             window.Update(state); Arrange();
             var peer = FrameworkElementAutomationPeer.CreatePeerForElement(surface)!;
             AutomationPeer Child(string name) => peer.GetChildren().Single(x => x.GetAutomationId() == name);
-            var expected = new[] { "details", "contentUsage", "contentBudget", "keepExpanded", "more", "period", "filters", "updateStatus", "refresh", "main", "collapse" };
+            var expected = new[] { "details", "contentUsage", "contentBudget", "contentMonitor", "keepExpanded", "more", "period", "filters", "updateStatus", "refresh", "main", "collapse" };
             Check(surface.KeyboardOrder().SequenceEqual(expected), "reading-order-matches-visible-navigation-and-footer");
             Check(!surface.Regions().Any(x => x.name is "themeDark" or "interval" or "close" or "only"), "low-frequency-preferences-and-ambiguous-footer-removed");
             Check(Child("contentUsage").GetAutomationControlType() == AutomationControlType.RadioButton &&
@@ -230,7 +230,7 @@ internal static class CapsuleAccessibilityTests
             before = actions.Count; RoutedKey(Key.Space); await Wait(() => actions.Count > before);
             Check(actions.Last().Command == "main" && !window.KeepsExpanded, "primary-space-opens-main");
 
-            var expected = new[] { "details", "contentUsage", "contentBudget", "keepExpanded", "more", "period", "filters", "updateStatus", "refresh", "main", "collapse" };
+            var expected = new[] { "details", "contentUsage", "contentBudget", "contentMonitor", "keepExpanded", "more", "period", "filters", "updateStatus", "refresh", "main", "collapse" };
             Check(surface.KeyboardOrder().SequenceEqual(expected), "tab-order-follows-existing-visual-order");
             surface.FocusAction("details", true);
             foreach (string id in expected.Skip(1).Append("details"))

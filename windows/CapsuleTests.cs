@@ -131,14 +131,27 @@ internal static class CapsuleTests
         var window = new CapsuleWindow((_, _) => Task.CompletedTask, readPointer: () => pointer, ownsPointer: _ => unoccluded)
         { ShowActivated = false, Topmost = false, IsHitTestVisible = false, Left = 500, Top = 160 };
         var checks = new JsonArray();
+        var waits = new JsonArray();
+        const int terminalTimeoutMs = 1500;
         void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException("Capsule hover: " + message); checks.Add(message); }
         void Event(RoutedEvent kind) => window.Surface.RaiseEvent(new System.Windows.Input.MouseEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = kind });
-        async Task AwaitCollapse()
+        JsonObject Snapshot() => J.Obj(("progress", window.Surface.Expansion), ("isAnimating", window.IsAnimating),
+            ("transitions", window.ExpansionTransitions), ("hoverEvents", window.HoverEventCount));
+        async Task AwaitEndpoint(double target, string phase)
         {
-            // 90ms departure + 220ms morph is a nominal duration, not a dispatcher deadline.
-            // Assert the terminal state and exact transition count after a bounded wait.
+            // Nominal animation durations are not dispatcher deadlines. Retain
+            // endpoint/transition assertions and expose actual scheduling time.
+            var initial = Snapshot();
             var watch = Stopwatch.StartNew();
-            while ((window.Surface.Expansion != 0 || window.IsAnimating) && watch.ElapsedMilliseconds < 600) await Task.Delay(10);
+            JsonObject? legacyDeadline = null;
+            while ((window.Surface.Expansion != target || window.IsAnimating) && watch.ElapsedMilliseconds < terminalTimeoutMs)
+            {
+                if (watch.ElapsedMilliseconds >= 600 && legacyDeadline is null) legacyDeadline = Snapshot();
+                await Task.Delay(10);
+            }
+            waits.Add(J.Obj(("phase", phase), ("target", target), ("timeoutMs", terminalTimeoutMs),
+                ("elapsedMs", watch.Elapsed.TotalMilliseconds), ("before", initial), ("after", Snapshot()),
+                ("stateAtLegacy600ms", legacyDeadline)));
         }
         try
         {
@@ -152,31 +165,71 @@ internal static class CapsuleTests
                 Event(System.Windows.UIElement.MouseEnterEvent);
                 // Reproduce repeated WPF enter/leave notifications with a stationary physical pointer.
                 for (int i = 0; i < 42; i++) { Event(System.Windows.UIElement.MouseLeaveEvent); Event(System.Windows.UIElement.MouseEnterEvent); await Task.Delay(7); }
-                var settle = Stopwatch.StartNew();
-                while ((window.Surface.Expansion != 1 || window.IsAnimating) && settle.ElapsedMilliseconds < 600) await Task.Delay(10);
+                await AwaitEndpoint(1, "stationary-edge-expand-" + angle);
                 Check(window.Surface.Expansion == 1 && window.ExpansionTransitions == transitions + 1 && !window.IsAnimating, "stationary circle edge " + angle + " completes once despite repeated enter/leave");
                 var expanded = window.VisualPixelBounds; pointer = new Point(expanded.Right + 30, expanded.Bottom + 30);
-                Event(System.Windows.UIElement.MouseLeaveEvent); await AwaitCollapse();
+                Event(System.Windows.UIElement.MouseLeaveEvent); await AwaitEndpoint(0, "physical-departure-" + angle);
                 Check(window.Surface.Expansion == 0 && window.ExpansionTransitions == transitions + 2 && !window.IsAnimating, "physical departure " + angle + " collapses exactly once");
             }
             window.UpdateLayout(); var origin = window.CompactPixelBounds;
             pointer = new Point(origin.X, origin.Y); int before = window.ExpansionTransitions;
             Event(System.Windows.UIElement.MouseEnterEvent); await Task.Delay(40);
             Check(window.ExpansionTransitions == before && window.Surface.Expansion == 0, "transparent circular corner does not start expansion");
-            pointer = new Point(origin.X + origin.Width / 2, origin.Y + origin.Height / 2); Event(System.Windows.UIElement.MouseEnterEvent);
-            await Task.Delay(30); pointer = new Point(origin.Right + 600, origin.Bottom + 600);
-            // Leaving while the enlarged HWND still has transparent pixels may not yield another WPF event.
-            await AwaitCollapse();
-            Check(window.Surface.Expansion == 0 && !window.IsAnimating, "physical departure during transition is detected without a MouseLeave event");
+            pointer = new Point(origin.X + origin.Width / 2, origin.Y + origin.Height / 2);
+            int midflightTransitions = window.ExpansionTransitions;
+            bool departed = false;
+            var startWatch = Stopwatch.StartNew();
+            JsonObject? departureState = null;
+            // Observe an actual intermediate rendering frame. A fixed delay can
+            // run before the first frame or after the entire morph on a busy host.
+            EventHandler departDuringFrame = (_, _) =>
+            {
+                if (departed || !window.IsAnimating || window.Surface.Expansion <= 0 || window.Surface.Expansion >= 1) return;
+                departureState = Snapshot();
+                pointer = new Point(origin.Right + 600, origin.Bottom + 600);
+                departed = true;
+            };
+            Event(System.Windows.UIElement.MouseEnterEvent);
+            CompositionTarget.Rendering += departDuringFrame;
+            try
+            {
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    while (!departed && startWatch.ElapsedMilliseconds < terminalTimeoutMs) await Task.Delay(10);
+                    waits.Add(J.Obj(("phase", "midflight-departure-injection"), ("elapsedMs", startWatch.Elapsed.TotalMilliseconds),
+                        ("observedIntermediateFrame", departed), ("departureState", departureState), ("after", Snapshot())));
+                    Check(departed && departureState is not null && departureState.N("transitions") == midflightTransitions + 1,
+                        "physical departure is injected only after one expansion starts at an actual intermediate frame");
+                }
+                else
+                {
+                    await AwaitEndpoint(1, "animation-disabled-expand");
+                    Check(window.Surface.Expansion == 1 && !window.IsAnimating, "animation-disabled hover reaches its endpoint before departure");
+                    // No intermediate frame exists with system animation disabled.
+                    waits.Add(J.Obj(("phase", "midflight-departure-injection"), ("skipped", "System client-area animation is disabled; no intermediate frame exists.")));
+                    window.Expand(false, false);
+                }
+            }
+            finally { CompositionTarget.Rendering -= departDuringFrame; }
+            if (SystemParameters.ClientAreaAnimation)
+            {
+                int departureHoverEvents = window.HoverEventCount;
+                // Deliberately inject no MouseMove or MouseLeave. The rendering/
+                // departure path must detect the changed physical point.
+                await AwaitEndpoint(0, "midflight-physical-departure");
+                Check(window.Surface.Expansion == 0 && !window.IsAnimating, "physical departure during transition is detected without a MouseLeave event");
+                Check(window.ExpansionTransitions == midflightTransitions + 2 && window.HoverEventCount == departureHoverEvents,
+                    "midflight departure collapses exactly once without another surface event");
+            }
             window.UpdateLayout(); origin = window.CompactPixelBounds; pointer = new Point(origin.X + origin.Width / 2, origin.Y + origin.Height / 2);
-            Event(System.Windows.UIElement.MouseEnterEvent); await Task.Delay(360); unoccluded = false;
-            Event(System.Windows.UIElement.MouseLeaveEvent); await AwaitCollapse();
+            Event(System.Windows.UIElement.MouseEnterEvent); await AwaitEndpoint(1, "occlusion-expand"); unoccluded = false;
+            Event(System.Windows.UIElement.MouseLeaveEvent); await AwaitEndpoint(0, "occlusion-collapse");
             Check(window.Surface.Expansion == 0 && !window.IsAnimating, "another window covering the expanded capsule ends hover even at the same coordinates");
             unoccluded = true; origin = window.CompactPixelBounds;
             pointer = new Point(origin.X + origin.Width / 2, origin.Y + origin.Height / 2);
             window.SetKeepsExpanded(true); window.Expand(true, false);
             var fixedHost = window.PixelBounds;
-            window.Collapse(); await AwaitCollapse();
+            window.Collapse(); await AwaitEndpoint(0, "explicit-collapse");
             Check(window.Surface.Expansion == 0 && window.KeepsExpanded && window.PixelBounds == fixedHost,
                 "active collapse preserves retention preference and fixed native envelope");
             for (int i = 0; i < 8; i++) Event(System.Windows.UIElement.MouseEnterEvent);
@@ -184,10 +237,13 @@ internal static class CapsuleTests
             Check(window.Surface.Expansion == 0 && !window.IsAnimating, "active collapse ignores stationary events and movement that never leaves the ring");
             pointer = new Point(origin.Right + 80, origin.Bottom + 80); Event(System.Windows.UIElement.MouseLeaveEvent);
             pointer = new Point(origin.X + origin.Width / 2, origin.Y + origin.Height / 2); Event(System.Windows.UIElement.MouseEnterEvent);
-            var reopen = Stopwatch.StartNew();
-            while ((window.Surface.Expansion != 1 || window.IsAnimating) && reopen.ElapsedMilliseconds < 700) await Task.Delay(10);
+            await AwaitEndpoint(1, "physical-reentry");
             Check(window.Surface.Expansion == 1 && !window.IsAnimating && window.KeepsExpanded, "physical leave and reentry restore retained expansion");
-            return J.Obj(("success", true), ("checks", checks), ("hoverEvents", window.HoverEventCount));
+            return J.Obj(("success", true), ("checks", checks), ("waits", waits), ("hoverEvents", window.HoverEventCount));
+        }
+        catch (Exception error)
+        {
+            return J.Obj(("success", false), ("checks", checks), ("waits", waits), ("error", error.ToString()), ("terminal", Snapshot()));
         }
         finally { window.Close(); }
     }

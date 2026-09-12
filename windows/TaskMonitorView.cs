@@ -115,6 +115,21 @@ internal sealed class TaskMonitorView : UserControl
         // Only an explicit message selection marks that message read. Merely opening a task does not.
         if (messageID.Length > 0) _ = Command("read", J.Obj(("ids", Strings([messageID]))));
     }
+    public void SelectMessages()
+    {
+        // The floating unread entry opens a list, not a message selection. It must
+        // not acknowledge messages or retain a search that hides the requested list.
+        SelectList(true);
+        rebuilding = true;
+        try
+        {
+            search.Text = "";
+            string mode = Monitor.A("messages").Rows().Any(x => !x.B("read")) ? "unread" : "all";
+            filter.SelectedItem = filter.Items.Cast<TaskMonitorUi.Choice>().First(x => x.Id == mode);
+        }
+        finally { rebuilding = false; }
+        RenderItems();
+    }
     private void SelectList(bool showMessages)
     {
         selected = selectedMessage = ""; messages = showMessages; selectedMessages.Clear();
@@ -353,7 +368,7 @@ internal sealed class TaskMonitorView : UserControl
     }
     private static JsonArray Strings(IEnumerable<string> values) => new(values.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
 
-    internal JsonObject Inspect() => J.Obj(("detail", IsViewingDetail), ("taskID", selected), ("messageID", selectedMessage), ("messages", messages), ("feedback", feedback.Text), ("width", ActualWidth), ("height", ActualHeight));
+    internal JsonObject Inspect() => J.Obj(("detail", IsViewingDetail), ("taskID", selected), ("messageID", selectedMessage), ("messages", messages), ("filter", (filter.SelectedItem as TaskMonitorUi.Choice)?.Id ?? "all"), ("search", search.Text), ("feedback", feedback.Text), ("width", ActualWidth), ("height", ActualHeight));
 }
 
 internal static class TaskMonitorUi

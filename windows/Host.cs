@@ -259,7 +259,7 @@ internal sealed class Host : IDisposable
         notifying = active.Select(x => x.S("id")).ToArray(); lastNotifiedRules = active.Select(x => x.S("ruleID")).Distinct().ToArray(); notificationAttempt = J.Now;
         if (!tray.Notify("Codex 用量 · 预算提醒", body)) notifying = null;
     }
-    public async Task OpenMain(string? page = null, string? budgetID = null, string? monitorID = null, string? messageID = null)
+    public async Task OpenMain(string? page = null, string? budgetID = null, string? monitorID = null, string? messageID = null, string? monitorList = null)
     {
         await mainGate.WaitAsync();
         try
@@ -267,12 +267,24 @@ internal sealed class Host : IDisposable
             if (disposed) return;
             if (scanCompletion is not null && page != "monitor") await scanCompletion.Task;
             if (disposed) return;
-            if (MainAlive) { try { await Ipc.Send(J.Obj(("action", "focus"), ("page", page), ("budgetID", budgetID), ("monitorID", monitorID), ("messageID", messageID)), Paths.Pipe + "-main"); return; } catch (IOException) { if (MainAlive) throw; } }
+            if (MainAlive)
+            {
+                try
+                {
+                    var focus = J.Obj(("action", "focus"), ("page", page), ("budgetID", budgetID), ("monitorID", monitorID), ("messageID", messageID), ("monitorList", monitorList));
+                    // Choose the unread/history list from the same current snapshot as
+                    // the floating header, even if the main panel has not polled yet.
+                    if (monitorList == "messages") focus["state"] = State();
+                    await Ipc.Send(focus, Paths.Pipe + "-main"); return;
+                }
+                catch (IOException) { if (MainAlive) throw; }
+            }
             var args = new System.Collections.Generic.List<string> { "--main", "--parent-pid", Environment.ProcessId.ToString() };
             if (demo) args.Add("--demo"); if (page is not null) { args.Add("--page"); args.Add(page); }
             if (budgetID is not null) { args.Add("--budget-id"); args.Add(budgetID); }
             if (monitorID is not null) { args.Add("--monitor-id"); args.Add(monitorID); }
             if (messageID is not null) { args.Add("--message-id"); args.Add(messageID); }
+            if (monitorList == "messages") { args.Add("--monitor-list"); args.Add(monitorList); }
             main?.Dispose(); main = job.Start(Environment.ProcessPath!, args.ToArray()); main.StandardInput.Close(); _ = Processes.ReadBounded(main.StandardError, 65536, stop.Token); _ = Processes.ReadBounded(main.StandardOutput, 65536, stop.Token);
             // The helper asks for its initial state over the host pipe when ready.
         }
@@ -311,6 +323,9 @@ internal sealed class Host : IDisposable
     private void ApplyFloating(JsonObject patch)
     {
         var next = settings.Floating.Copy(); foreach (var (key, value) in patch) next[key] = value?.DeepClone();
+        // A merged patch cannot remove old keys by omission. Drop legacy fixed
+        // expansion direction from the actual object that reaches persistence.
+        next.Remove("panelOffsetX"); next.Remove("panelOffsetY");
         if (patch.S("content") == "monitor") next["quotaContent"] = settings.Floating.S("content") == "budget" ? "budget" : settings.Floating.S("quotaContent", "usage");
         else if (patch.S("content") is "usage" or "budget") next["quotaContent"] = patch.S("content");
         bool scopeChanged = new[] { "days", "model", "task" }.Any(key => next.S(key) != settings.Floating.S(key));
@@ -334,9 +349,22 @@ internal sealed class Host : IDisposable
             {
                 case "main": await OpenMain(f.S("content") is "budget" or "monitor" ? f.S("content") : null, f.S("budgetID")); return;
                 case "monitorManage": await OpenMain("monitor"); return;
+                case "monitorMessages": await OpenMain("monitor", monitorList: "messages"); return;
                 case "monitorDetail": await OpenMain("monitor", monitorID: value); return;
+                case "monitorStop":
+                    var stopped = await MonitorOperation("stop", J.Obj(("id", value)));
+                    if (!stopped.O("monitorResult").B("ok")) capsule?.Surface.ShowError(stopped.O("monitorResult").S("error", "取消监控失败，请重试"));
+                    return;
                 case "monitorSettings": ShowMonitorSettings(); return;
-                case "monitorCheck": await MonitorOperation("check", new()); return;
+                case "monitorCheck":
+                    string checkedHome = settings.Home;
+                    try { var checkedState = await MonitorOperation("check", new()); capsule?.Surface.CompleteMonitorCheck(checkedState, checkedHome); }
+                    catch (Exception e) { capsule?.Surface.FailMonitorCheck(e.Message, checkedHome); }
+                    return;
+                case "monitorClearEnded":
+                    var cleared = await MonitorOperation("clear-ended", new());
+                    if (!cleared.O("monitorResult").B("ok")) capsule?.Surface.ShowError(cleared.O("monitorResult").S("error", "清除失败，请到任务监控页面重试"));
+                    return;
                 case "budgetManage": await OpenMain("budget", f.S("budgetID")); return;
                 case "budgetEdit": await OpenMain("budget", f.S("budgetID")); await Ipc.Send(J.Obj(("action", "focus"), ("page", "budget"), ("budgetID", f.S("budgetID")), ("edit", true)), Paths.Pipe + "-main"); return;
                 case "refresh": await Refresh(true); return;
@@ -384,7 +412,7 @@ internal sealed class Host : IDisposable
                 var state = State(); if (demo) state["choices"] = DemoData.Usage().O("filters").DeepClone();
                 else { var filters = request.S("action") == "budget-choices" ? J.Obj(("days", "all"), ("model", "all"), ("task", "all")) : settings.Floating.Copy(); string cache = Paths.Cache(settings.Home); state["choices"] = (await Task.Run(() => NativeIndex.Read(cache, filters, new(), true, includeEmptyBudgetMetadata: false))).O("choices").DeepClone(); }
                 return state;
-            case "main": await OpenMain(request.S("page"), request.S("budgetID"), request.S("monitorID"), request.S("messageID")); break;
+            case "main": await OpenMain(request.S("page"), request.S("budgetID"), request.S("monitorID"), request.S("messageID"), request.S("monitorList")); break;
             case "monitor":
                 if (request.S("operation") == "test-notification")
                 {

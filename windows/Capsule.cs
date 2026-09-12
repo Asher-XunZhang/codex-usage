@@ -120,6 +120,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     internal bool RingVisible => Edge == CapsuleEdge.None && Expansion <= .001;
     private Rect HostBounds => new(HostSize ?? new Size(ActualWidth, ActualHeight));
     internal Rect DrawingBounds => AnimationBounds ?? (CompactBounds is Rect compact && PanelBounds is Rect panel ? CapsuleMorph.Frame(compact, panel, Expansion).Shape : HostBounds);
+    private Rect DetailPanelBounds => Expansion >= .999 && AnimationBounds is not null && Edge == CapsuleEdge.None ? DrawingBounds : PanelBounds ?? DrawingBounds;
     internal double CurrentRadius => AnimationBounds is null && CompactBounds is Rect compact && PanelBounds is Rect panel ? CapsuleMorph.Frame(compact, panel, Expansion).Radius : 38 - 16 * Expansion;
     internal bool CaptureTextBounds;
     internal List<(string Text, Rect Bounds)> VisibleTextBounds { get; } = new();
@@ -191,7 +192,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         FiltersOpen = !FiltersOpen; expandedDrawing = null; NormalizeKeyboardAction();
         capsulePeer?.NotifyStateChanges(); Redraw();
     }
-    internal void WindowStateChanged() { capsulePeer?.NotifyStateChanges(); Redraw(); }
+    internal void WindowStateChanged() { expandedDrawing = null; capsulePeer?.NotifyStateChanges(); Redraw(); }
     private string Range => BudgetMode ? budgetDisplay.Caption : State.O("settings").O("floating").S("days", "1") switch { "1" => "今日", "all" => "全部", var d => d + "天" };
     private bool Stale => BudgetQuota ? budgetDisplay.Stale : Quota.B("stale", true);
     private string? hover, down;
@@ -204,16 +205,25 @@ internal sealed class CapsuleSurface : FrameworkElement
     internal bool KeyboardInteraction => keyboardFocusVisible && IsKeyboardFocusWithin;
     internal Rect KeyboardFocusBounds => Regions().FirstOrDefault(x => x.name == keyboardAction).bounds;
     private string? interactionError;
+    private TaskMonitorCheckFeedback? monitorCheckFeedback;
+    internal string MonitorCheckLabel => window.MonitorCheckPending ? "检查中…" : monitorCheckFeedback?.Failed == true ? "重试检查" : "检查任务";
+    internal string MonitorCheckStatus => window.MonitorCheckPending ? "正在检查本地任务日志…" :
+        monitorCheckFeedback is not null && (monitorCheckFeedback.Failed || State.O("monitor").S("error").Length == 0 && State.O("monitor").O("sourceStatus").S("status") == "available")
+            ? monitorCheckFeedback.Text : TaskMonitorVisual.SourceText(State);
     private Point pressScreen, pressOrigin;
     private Rect? pressHotspot;
     private DpiScale pressDpi;
-    private bool dragged;
+    private bool dragged, pointerPressed, pressExpanded;
+    internal bool PointerGestureActive => pointerPressed;
     public static readonly DependencyProperty LevelProperty = DependencyProperty.Register(nameof(Level), typeof(double), typeof(CapsuleSurface), new FrameworkPropertyMetadata(-1d, (o, _) => ((CapsuleSurface)o).Redraw()));
     public double Level { get => (double)GetValue(LevelProperty); set => SetValue(LevelProperty, value); }
     private double levelTarget = -1;
     public CapsuleSurface(CapsuleWindow owner)
     {
         window = owner; AddVisualChild(drawing); Focusable = true; Cursor = Cursors.Hand;
+        // This surface draws focus around its virtual actions. WPF's default
+        // adorner would instead outline the full transparent window envelope.
+        FocusVisualStyle = null;
         InputMethod.SetIsInputMethodEnabled(this, false);
         // The capsule already is the hover detail view. A ToolTip on this single
         // drawing surface treats the whole HWND as its owner, including resize envelopes.
@@ -223,7 +233,12 @@ internal sealed class CapsuleSurface : FrameworkElement
         Loaded += (_, _) => PrepareDetails();
         GotKeyboardFocus += (_, _) =>
         {
-            if (!settingFocus) FocusAction(keyboardAction ?? "details", true);
+            if (settingFocus) return;
+            // Native activation and child-window dismissal can restore logical
+            // focus without any navigation intent. Retain the input mode chosen
+            // by the last pointer, key or accessibility action.
+            if (keyboardFocusVisible) window.BeginKeyboardInteraction();
+            NormalizeKeyboardAction(); capsulePeer?.NotifyFocusChanged(keyboardAction); Redraw();
         };
         LostKeyboardFocus += (_, _) => Dispatcher.BeginInvoke(() =>
         {
@@ -231,9 +246,9 @@ internal sealed class CapsuleSurface : FrameworkElement
             Redraw();
             if (!IsKeyboardFocusWithin && !window.InteractionActive) window.EndKeyboardInteraction();
         });
-        MouseRightButtonUp += async (_, e) => { if (!ContainsDrawing(e.GetPosition(this))) return; e.Handled = true; FocusAction(Hit(e.GetPosition(this)) ?? "details", false); await window.ShowMenu("context"); };
+        MouseRightButtonUp += async (_, e) => { if (pointerPressed || !ContainsDrawing(e.GetPosition(this))) return; e.Handled = true; FocusAction(Hit(e.GetPosition(this)) ?? "details", false); await window.ShowMenu("context"); };
         MouseLeave += (_, _) => { if (PresentationSource.FromVisual(this) != null) window.TrackPointer(PointToScreen(Mouse.GetPosition(this))); ClearFeedback(); };
-        LostMouseCapture += async (_, _) => { if (down is not null) { bool moving = dragged && down == "details"; down = null; if (moving) await window.FinishDrag(); else window.Press(false); ClearFeedback(); } };
+        LostMouseCapture += async (_, _) => await CaptureLostAsync();
         KeyDown += async (_, e) =>
         {
             Key key = InputKey(e.Key, e.SystemKey, e.ImeProcessedKey);
@@ -244,6 +259,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     public void Update(JsonObject state)
     {
+        if (State.S("home") != state.S("home")) monitorCheckFeedback = null;
         expandedDrawing = null; interactionError = null;
         double previous = Level; State = state; budgetDisplay = CapsuleBudgetDisplay.From(state); double next = Fraction is double d && double.IsFinite(d) ? Math.Clamp(d, 0, 1) : -1;
         // A task-state refresh can arrive while the independent quota tween is
@@ -272,7 +288,12 @@ internal sealed class CapsuleSurface : FrameworkElement
         else if (Stale) help += "；上次记录，数据可能已过期";
         if (TaskMonitorVisual.SummaryStatus(State).Length > 0)
             help += "；" + TaskMonitorVisual.FocusText(State) + "，" + TaskMonitorGlyph.Label(TaskMonitorVisual.SummaryStatus(State)) + "；" + TaskMonitorVisual.SummaryText(State);
-        help += "；Enter 或空格执行当前项，Tab 切换操作，Shift+F10 打开菜单，Ctrl+Space 切换保持展开";
+        if (MonitorMode && Expansion >= .999 && Edge == CapsuleEdge.None)
+        {
+            name = "任务监控浮窗";
+            help = TaskMonitorHeaderDisplay.From(State).AccessibleText;
+        }
+        help += "；展开时可按住任意位置拖动，拖动不会触发按钮；Enter 或空格执行当前项，Tab 切换操作，Shift+F10 打开菜单，Ctrl+Space 切换保持展开";
         AutomationProperties.SetName(this, name); AutomationProperties.SetHelpText(this, help);
     }
     internal IReadOnlyList<string> KeyboardOrder() => Regions().Where(x => x.name != "context" && ActionEnabled(x.name))
@@ -284,6 +305,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     internal void FocusAction(string name, bool keyboard)
     {
+        if (pointerPressed && keyboard) return;
         window.NewFocusIntent();
         keyboardFocusVisible = keyboard;
         if (keyboard) window.BeginKeyboardInteraction();
@@ -306,6 +328,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         key == Key.Apps || key == Key.F10 && modifiers == ModifierKeys.Shift;
     internal async Task<bool> HandleKeyboardAsync(Key key, ModifierKeys modifiers)
     {
+        if (pointerPressed) return true;
         window.NewFocusIntent();
         if (key == Key.Tab && (modifiers & ~ModifierKeys.Shift) == ModifierKeys.None)
         {
@@ -331,14 +354,30 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     internal async Task ActivateActionAsync(string name, bool keyboard)
     {
-        if (!ActionEnabled(name) || !Regions().Any(x => x.name == name)) return;
+        if (pointerPressed || !ActionEnabled(name) || !Regions().Any(x => x.name == name)) return;
         if (keyboard) FocusAction(name, true);
         await window.Invoke(name);
     }
     internal void ShowError(string message) { interactionError = message; expandedDrawing = null; Redraw(); }
+    internal void BeginMonitorCheck() { monitorCheckFeedback = null; interactionError = null; WindowStateChanged(); }
+    internal void CompleteMonitorCheck(JsonObject result, string home)
+    {
+        if (State.S("home") != home) return;
+        monitorCheckFeedback = TaskMonitorCheckFeedback.From(result); WindowStateChanged();
+    }
+    internal void FailMonitorCheck(string message, string home)
+    {
+        if (State.S("home") != home) return;
+        monitorCheckFeedback = TaskMonitorCheckFeedback.Failure(message); WindowStateChanged();
+    }
     public void ClearFeedback() { hover = null; Redraw(); }
-    internal void CancelInteraction() { down = null; hover = null; dragged = false; if (IsMouseCaptured) ReleaseMouseCapture(); Redraw(); }
+    internal void CancelInteraction() { pointerPressed = false; down = null; hover = null; dragged = false; window.CancelExpandedDrag(); if (IsMouseCaptured) ReleaseMouseCapture(); Redraw(); }
     internal bool ActionEnabled(string name) => name != "budgetScope" && (name != "refresh" || !State.B("busy")) &&
+        (name != "monitorCheck" || !window.MonitorCheckPending) &&
+        (!(name == "monitorClearEnded" || name.StartsWith("monitorStop:", StringComparison.Ordinal)) || !window.MonitorMutationPending) &&
+        (name != "monitorClearEnded" || State.O("monitor").S("error").Length == 0 && State.O("monitor").A("watches").Rows().Any(x => !x.B("active"))) &&
+        (!name.StartsWith("monitorStop:", StringComparison.Ordinal) || State.O("monitor").S("error").Length == 0 &&
+            State.O("monitor").A("watches").Rows().Any(x => x.S("id") == name[12..] && x.B("active"))) &&
         (name is not ("budgetPause" or "budgetResume" or "view-budget") || State.O("budgets").A("rules").Rows().Any(x => x.S("id") == State.O("settings").O("floating").S("budgetID")));
     internal string? Hit(Point local)
     {
@@ -351,23 +390,38 @@ internal sealed class CapsuleSurface : FrameworkElement
     protected override HitTestResult? HitTestCore(PointHitTestParameters parameters) => ContainsDrawing(parameters.HitPoint) ? new PointHitTestResult(this, parameters.HitPoint) : null;
     private void Down(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount > 1) return;
-        if (window.InteractionActive) return;
-        down = Hit(e.GetPosition(this)); if (down is null || !ActionEnabled(down)) { down = null; return; }
-        FocusAction(down, false);
-        e.Handled = true; pressScreen = PointToScreen(e.GetPosition(this)); pressDpi = VisualTreeHelper.GetDpi(this); pressHotspot = window.Hotspot; dragged = false;
-        window.Press(true); pressOrigin = window.PixelBounds.TopLeft; CaptureMouse(); Redraw();
+        var local = e.GetPosition(this);
+        e.Handled = PointerDown(local, PointToScreen(local), e.ClickCount);
+    }
+    internal bool PointerDown(Point local, Point screen, int clickCount = 1)
+    {
+        if (pointerPressed || window.InteractionActive || !ContainsDrawing(local)) return false;
+        string? hit = Hit(local);
+        pressExpanded = Expansion >= .999 && Edge == CapsuleEdge.None;
+        // While opening, any visible part can be grabbed. The gesture retains
+        // compact intent until the complete expanded panel is actually present.
+        down = clickCount <= 1 && hit is not null && ActionEnabled(hit) ? hit : null;
+        // Empty/disabled areas are drag grips, never synthetic open-main clicks.
+        FocusAction(down ?? "details", false);
+        pressScreen = screen; pressDpi = VisualTreeHelper.GetDpi(this); pressHotspot = window.Hotspot; dragged = false; pointerPressed = true;
+        window.Press(true); pressOrigin = window.PixelBounds.TopLeft;
+        if (!CaptureMouse()) { pointerPressed = false; down = null; window.Press(false); return false; }
+        Redraw(); return true;
     }
     private void Move(object sender, MouseEventArgs e)
     {
         var p = e.GetPosition(this); var screen = PointToScreen(p);
+        PointerMove(p, screen);
+    }
+    internal void PointerMove(Point p, Point screen)
+    {
         double dx = screen.X - pressScreen.X, dy = screen.Y - pressScreen.Y;
-        if (down is not null)
+        if (pointerPressed)
         {
             bool wasDragged = dragged;
             dragged |= CapsuleGeometry.Dragged(pressScreen, screen, pressDpi);
-            if (dragged && !wasDragged && down == "details") { pressOrigin = window.BeginDrag(pressScreen); pressHotspot = null; }
-            if (dragged && down == "details") window.MoveBy(dx, dy, pressOrigin, pressHotspot);
+            if (dragged && !wasDragged) { pressOrigin = pressExpanded ? window.BeginExpandedDrag(pressScreen) : window.BeginDrag(pressScreen); pressHotspot = null; }
+            if (dragged) window.MoveBy(dx, dy, pressOrigin, pressHotspot);
         }
         else { window.TrackPointer(screen); window.PointerMoved(screen); }
         string? next = Expansion > .99 && !dragged && !window.InteractionActive ? Hit(p) : down is not null && !dragged ? Hit(p) : null;
@@ -376,14 +430,30 @@ internal sealed class CapsuleSurface : FrameworkElement
     }
     private async void Up(object sender, MouseButtonEventArgs e)
     {
-        string? selected = down; if (selected is null) return;
-        Point local = e.GetPosition(this); bool moved = dragged || CapsuleGeometry.Dragged(pressScreen, PointToScreen(local), pressDpi);
-        string? target = !moved && selected == Hit(local) && ActionEnabled(selected) ? selected : null;
-        down = null; ReleaseMouseCapture(); ClearFeedback();
-        if (moved && selected == "details") { if (!dragged) window.BeginDrag(pressScreen); await window.FinishDrag(); return; }
+        var local = e.GetPosition(this); e.Handled = pointerPressed;
+        await PointerUpAsync(local, PointToScreen(local));
+    }
+    internal async Task PointerUpAsync(Point local, Point screen)
+    {
+        if (!pointerPressed) return;
+        string? selected = down;
+        // A final pointer move can be coalesced away. Apply the up coordinates
+        // through the same irreversible drag decision before releasing capture.
+        PointerMove(local, screen);
+        bool moved = dragged;
+        string? target = !moved && selected is not null && selected == Hit(local) && ActionEnabled(selected) ? selected : null;
+        pointerPressed = false; down = null; dragged = false;
+        ReleaseMouseCapture(); ClearFeedback();
+        if (moved) { await window.FinishDrag(); return; }
         window.Press(false);
-        if (moved) return;
         if (target != null) await ActivateActionAsync(target, false);
+    }
+    internal async Task CaptureLostAsync()
+    {
+        if (!pointerPressed) return;
+        bool moved = dragged; pointerPressed = false; down = null; dragged = false; ClearFeedback();
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (moved) await window.FinishDrag(); else window.Press(false);
     }
     public List<(string name, string label, Rect bounds)> Regions()
     {
@@ -402,7 +472,7 @@ internal sealed class CapsuleSurface : FrameworkElement
             }
             return [("details", "打开主面板", grip), ("context", "浮窗功能菜单，包含保持展开", DrawingBounds)];
         }
-        var offset = (PanelBounds ?? DrawingBounds).TopLeft;
+        var offset = DetailPanelBounds.TopLeft;
         return LocalRegions().Select(x => { var r = x.bounds; r.Offset(offset.X, offset.Y); r.Intersect(DrawingBounds); return (x.name, x.label, r); }).Where(x => !x.r.IsEmpty).Select(x => (x.name, x.label, x.r)).ToList();
     }
     private List<(string name, string label, Rect bounds)> LocalRegions(bool includeExpanded = false)
@@ -418,15 +488,20 @@ internal sealed class CapsuleSurface : FrameworkElement
             ("main","打开主面板",new(16,375,150,24)),("collapse","收起为圆环",new(246,375,74,24))});
         if (MonitorMode)
         {
+            var display = TaskMonitorHeaderDisplay.From(State);
+            r[0] = ("details", "打开任务监控主面板，" + display.AccessibleText, new(0, 0, 240, 52));
+            r.Add(("monitorMessages", $"查看消息记录，{display.UnreadCount} 条未读；打开列表不会标为已读", new(244, 13, 74, 27)));
             var tasks = TaskMonitorVisual.Featured(State);
             for (int index = 0; index < tasks.Count; index++)
             {
                 var task = tasks[index];
-                r.Add(("monitorDetail:" + task.S("id"), "查看任务，" + task.S("title") + "，" + TaskMonitorGlyph.Label(task.S("status")) + "，" + TaskMonitorVisual.Metadata(task), new(263, MonitorTaskBounds(index).Top + 12, 49, 28)));
+                r.Add(("monitorDetail:" + task.S("id"), "查看任务，" + task.S("title") + "，" + TaskMonitorGlyph.Label(task.S("status")) + "，" + TaskMonitorVisual.Metadata(task), new(246, MonitorTaskBounds(index).Top + 7, 66, 26)));
+                r.Add(("monitorStop:" + task.S("id"), (task.B("active") ? "取消监控，" : "监控已结束，") + task.S("title") + "；仅停止本工具的提醒，Codex 继续执行，已有消息保留", new(246, MonitorTaskBounds(index).Top + 39, 66, 26)));
             }
-            r.Add(("monitorManage", tasks.Count == 0 ? "选择正在执行的任务" : "查看全部任务与消息", new(16, 306, 304, 28)));
-            r.Add(("monitorSettings", "任务提醒设置，" + TaskMonitorVisual.SourceText(State), new(16, 337, 204, 29)));
-            r.Add(("monitorCheck", "检查监控连接", new(230, 339, 90, 27)));
+            r.Add(("monitorManage", tasks.Count == 0 && State.O("monitor").A("messages").Count == 0 ? "选择正在执行的任务" : "查看全部任务与消息", new(16, 306, 188, 28)));
+            r.Add(("monitorClearEnded", "清除已结束结果，保留活动监控和消息历史", new(214, 306, 106, 28)));
+            r.Add(("monitorSettings", "任务提醒设置", new(16, 352, 84, 14)));
+            r.Add(("monitorCheck", MonitorCheckLabel + "，" + MonitorCheckStatus + "；" + monitorCheckFeedback?.Detail, new(230, 339, 90, 27)));
         }
         else
         {
@@ -463,7 +538,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         bool full = Expansion >= .999 && Edge == CapsuleEdge.None;
         if (edgeChanged || accessibleExpanded != full)
         {
-            accessibleExpanded = full; NormalizeKeyboardAction();
+            accessibleExpanded = full; UpdateAccessibility(); NormalizeKeyboardAction();
             capsulePeer?.NotifyStateChanges(); capsulePeer?.NotifyFocusChanged(keyboardAction);
         }
         using var dc = drawing.RenderOpen(); Draw(dc);
@@ -554,7 +629,7 @@ internal sealed class CapsuleSurface : FrameworkElement
         }
         void Box(double x, double y, double width, double height, double alpha = .05, double corner = 8) { dc.DrawRoundedRectangle(Translucent(ink, alpha), null, new(x, y, width, height), corner, corner); }
         var compact = AnimationBounds is not null ? bounds : CompactBounds ?? new Rect(bounds.TopLeft, new Size(76, 76));
-        var panel = PanelBounds ?? bounds;
+        var panel = DetailPanelBounds;
         var morph = CapsuleMorph.Frame(compact, panel, Expansion);
         if (morph.ArcAlpha > 0)
         {
@@ -579,12 +654,27 @@ internal sealed class CapsuleSurface : FrameworkElement
             dc.PushOpacity(morph.DetailsAlpha);
             dc.PushTransform(new TranslateTransform(panel.X, panel.Y)); textOffset = panel.TopLeft;
             w = panel.Width;
+            if (MonitorMode)
+            {
+                var display = TaskMonitorHeaderDisplay.From(State);
+                var tone = TaskMonitorGlyph.Brush(display.Status == "none" ? "idle" : display.Status, light);
+                dc.DrawRoundedRectangle(Translucent(tone, light ? .085 : .11), new Pen(Translucent(tone, .13), 1), new(2.5, 2.5, w - 5, 47), 23.5, 23.5);
+                TaskMonitorGlyph.Draw(dc, new(21, 18, 16, 16), display.Status == "none" ? "idle" : display.Status, light);
+                TextInRect(display.Title, new(49, 9, 187, 18), 13, ink, TextAlignment.Left, 0);
+                TextInRect(display.Subtitle, new(49, 29, 187, 13), 9, secondary, TextAlignment.Left, 0);
+                var messageArea = new Rect(244, 13, 74, 27);
+                dc.DrawRoundedRectangle(Translucent(tone, hover == "monitorMessages" ? .19 : .10), null, messageArea, 13.5, 13.5);
+                TextInRect(display.UnreadText, messageArea, 10, display.UnreadCount > 0 ? ink : secondary, padding: 4);
+            }
+            else
+            {
             dc.PushClip(new RectangleGeometry(new(2.5, 2.5, w - 5, 47), 23.5, 23.5));
             dc.DrawRectangle(Translucent(ink, .045), null, new(2.5, 2.5, w - 5, 47));
             if (Level > 0) { var liquid = new LinearGradientBrush(light ? System.Windows.Media.Color.FromRgb(209, 240, 222) : System.Windows.Media.Color.FromRgb(14, 97, 66), light ? System.Windows.Media.Color.FromRgb(189, 224, 204) : System.Windows.Media.Color.FromRgb(5, 51, 38), 90); dc.DrawRectangle(liquid, null, new(2.5, 2.5, (w - 5) * Level, 47)); }
             dc.Pop();
             Text((BudgetQuota ? (MonitorMode ? budgetDisplay.Name : "预算剩余") : DisplayName) + (Stale ? " · 上次" : ""), 85, 21, 90, 10, secondary);
             Text(BudgetQuota ? "剩余" : "今日", 181, 21, 34, 10, secondary); Text(Total, 222, 14, 94, 18, ink, alignment: TextAlignment.Right);
+            }
             var key = (window.KeepsExpanded, light, FiltersOpen, hover, down, pixelsPerDip, CaptureTextBounds);
             if (expandedDrawing == null || expandedKey != key)
             {
@@ -602,12 +692,16 @@ internal sealed class CapsuleSurface : FrameworkElement
             if (CaptureTextBounds) foreach (var item in expandedTextBounds) { var r = item.Bounds; r.Offset(panel.X, panel.Y); VisibleTextBounds.Add((item.Text, r)); }
             dc.Pop(); dc.Pop();
         }
-        // One percent glyph run lives for the entire morph. Shape the font once,
+        // Usage and budget keep one percent glyph run for the entire morph.
+        // Monitor fades it with compact content; its expanded header has task semantics.
+        // Shape the font once,
         // scale it gently, and constrain the complete ink rectangle to the current
         // rounded contour rather than using clipping to reveal pieces of a number.
         var primary = Layout(Percent(), 200, 18, ink);
-        if (!primary.Ink.IsEmpty)
+        double primaryAlpha = MonitorMode ? morph.ArcAlpha : 1;
+        if (!primary.Ink.IsEmpty && primaryAlpha > 0)
         {
+            dc.PushOpacity(primaryAlpha);
             double scale = morph.PrimaryFontSize / 18;
             var wanted = new Rect(morph.PrimaryCenter.X - primary.Ink.Width * scale / 2, morph.PrimaryCenter.Y - primary.Ink.Height * scale / 2, primary.Ink.Width * scale, primary.Ink.Height * scale);
             var safe = CapsuleMorph.SafeText(wanted, bounds, radius);
@@ -617,6 +711,7 @@ internal sealed class CapsuleSurface : FrameworkElement
                 dc.PushTransform(new ScaleTransform(scale, scale)); dc.DrawText(primary.Text, new()); dc.Pop(); dc.Pop();
                 if (CaptureTextBounds) VisibleTextBounds.Add((Percent(), safe));
             }
+            dc.Pop();
         }
         dc.DrawGeometry(null, new Pen(border, 1), shape);
         dc.Pop();
@@ -630,7 +725,7 @@ internal sealed class CapsuleSurface : FrameworkElement
             void ActionText(string name, string value, double size, SolidColorBrush color, TextAlignment alignment = TextAlignment.Center, double padding = 8) =>
                 TextInRect(value, ActionRect(name), size, color, alignment, padding);
             void ActionBox(string name, double opacity) { var r = ActionRect(name); Box(r.X, r.Y, r.Width, r.Height, opacity); }
-            foreach (var r in actions.Where(x => x.name is not ("details" or "context"))) if (hover == r.name && ActionEnabled(r.name))
+            foreach (var r in actions.Where(x => x.name is not ("details" or "context" or "monitorMessages"))) if (hover == r.name && ActionEnabled(r.name))
             {
                 Rect glow = r.bounds;
                 for (int i = 10; i >= 1; i--) { var c = Translucent(accent, .012 + .003 * (10 - i)); var outer = glow; outer.Inflate(i, i); dc.DrawRoundedRectangle(null, new Pen(c, 2), outer, 8 + i, 8 + i); }
@@ -647,14 +742,18 @@ internal sealed class CapsuleSurface : FrameworkElement
             ActionText("more", "更多 ···", 10, ink, padding: 0);
             if (MonitorMode)
             {
-                Text(TaskMonitorVisual.SummaryText(State), 20, 103, 296, 10, ink);
-                Text(TaskMonitorVisual.FocusText(State), 20, 120, 296, 9, secondary);
+                Text("关注的任务", 20, 103, 190, 11, ink);
+                int count = State.O("monitor").A("watches").Count;
+                Text($"全部 {(count > 99 ? "99+" : count.ToString(CultureInfo.InvariantCulture))} 项", 244, 104, 72, 9, secondary, alignment: TextAlignment.Right);
+                bool retainedRecords = State.O("monitor").S("error").Length > 0 || State.O("monitor").O("sourceStatus").S("status") != "available";
+                Text(retainedRecords ? "来源待确认 · 以下为保留记录" : "优先显示需处理和有新消息的任务", 20, 120, 296, 9, secondary);
                 var tasks = TaskMonitorVisual.Featured(State);
                 if (tasks.Count == 0)
                 {
-                    TaskMonitorGlyph.Draw(dc, new(157, 169, 22, 22), "idle", light);
-                    TextInRect("选择正在执行的任务", new(28, 206, 280, 21), 13, ink);
-                    TextInRect("本轮结束后提醒你", new(28, 232, 280, 18), 10, secondary);
+                    bool uncertain = TaskMonitorHeaderDisplay.From(State).Status == "unknown";
+                    TaskMonitorGlyph.Draw(dc, new(157, 169, 22, 22), uncertain ? "unknown" : "idle", light);
+                    TextInRect(uncertain ? "暂时无法确认任务列表" : "选择正在执行的任务", new(28, 206, 280, 21), 13, ink);
+                    TextInRect(uncertain ? "已有消息保留，可检查后重试" : "本轮结束后提醒你", new(28, 232, 280, 18), 10, secondary);
                     TextInRect("监控与用量筛选互相独立", new(28, 260, 280, 17), 9, secondary);
                 }
                 for (int index = 0; index < tasks.Count; index++)
@@ -662,23 +761,27 @@ internal sealed class CapsuleSurface : FrameworkElement
                     var task = tasks[index]; var card = MonitorTaskBounds(index); double top = card.Top;
                     Box(card.X, card.Y, card.Width, card.Height, .045);
                     TaskMonitorGlyph.Draw(dc, new(26, top + 10, 11, 11), task.S("status"), light);
-                    Text(TaskMonitorGlyph.Label(task.S("status")), 43, top + 8, 207, 10, TaskMonitorGlyph.Brush(task.S("status"), light));
+                    Text(TaskMonitorGlyph.Label(task.S("status")), 43, top + 8, 193, 10, TaskMonitorGlyph.Brush(task.S("status"), light));
                     var title = new FormattedText(task.S("title", "未命名任务"), CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight,
-                        RegularFont, 11, ink, pixelsPerDip) { MaxTextWidth = 227, MaxLineCount = 2, LineHeight = 14, Trimming = TextTrimming.CharacterEllipsis };
+                        RegularFont, 11, ink, pixelsPerDip) { MaxTextWidth = 210, MaxLineCount = 2, LineHeight = 14, Trimming = TextTrimming.CharacterEllipsis };
                     dc.DrawText(title, new(26, top + 25));
                     if (CaptureTextBounds)
                     {
                         var box = title.BuildGeometry(new()).Bounds;
                         if (!box.IsEmpty) { box.Offset(26, top + 25); expandedTextBounds.Add((task.S("title", "未命名任务"), box)); }
                     }
-                    Text(TaskMonitorVisual.Metadata(task), 26, top + 58, 276, 9, secondary);
+                    Text(TaskMonitorVisual.Metadata(task), 26, top + 58, 210, 9, secondary);
                     ActionText("monitorDetail:" + task.S("id"), "查看", 10, accent, padding: 4);
+                    string stopAction = "monitorStop:" + task.S("id");
+                    ActionText(stopAction, task.B("active") ? "取消监控" : "监控已结束", 10,
+                        ActionEnabled(stopAction) ? secondary : Translucent(secondary, .55), padding: 4);
                 }
-                ActionBox("monitorManage", .055); ActionText("monitorManage", tasks.Count == 0 ? "选择任务" : "查看全部任务与消息", 10, accent);
-                var monitorSource = ActionRect("monitorSettings");
-                TextInRect(interactionError ?? TaskMonitorVisual.SourceText(State), new(monitorSource.X, monitorSource.Y, monitorSource.Width, 15), 9, secondary, TextAlignment.Left, 4);
-                TextInRect("提醒设置", new(monitorSource.X, monitorSource.Y + 15, monitorSource.Width, 14), 9, accent, TextAlignment.Left, 4);
-                ActionBox("monitorCheck", .06); ActionText("monitorCheck", "检查连接", 10, accent, padding: 3);
+                ActionBox("monitorManage", .055); ActionText("monitorManage", tasks.Count == 0 && State.O("monitor").A("messages").Count == 0 ? "选择任务" : "查看全部任务与消息", 10, accent);
+                ActionBox("monitorClearEnded", .035); ActionText("monitorClearEnded", "清除已结束结果", 10,
+                    ActionEnabled("monitorClearEnded") ? ink : Translucent(secondary, .55), padding: 4);
+                TextInRect(interactionError ?? MonitorCheckStatus, new(16, 337, 204, 15), 9, secondary, TextAlignment.Left, 4);
+                ActionText("monitorSettings", "提醒设置", 9, accent, TextAlignment.Left, 4);
+                ActionBox("monitorCheck", .06); ActionText("monitorCheck", MonitorCheckLabel, 10, ActionEnabled("monitorCheck") ? accent : secondary, padding: 3);
             }
             else if (BudgetMode)
             {

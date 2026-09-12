@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage · 跨平台演进"
+  short_description: "区分共享行为与平台实现，评估兼容和资源成本，验证合入与发行边界"
+  default_prompt: "使用 $codex-usage-cross-platform 检查当前跨平台改动，明确受影响行为和必要验证。"

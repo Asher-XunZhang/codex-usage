@@ -1,5 +1,29 @@
 import { fileURLToPath } from 'node:url'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { defineConfig } from 'vitepress'
+
+// Preserve published image URLs while keeping source assets with their platform.
+const assetCache = resolve(fileURLToPath(new URL('./cache/', import.meta.url)))
+const publicImages = join(assetCache, 'documentation-images')
+mkdirSync(assetCache, { recursive: true })
+if (dirname(realpathSync(assetCache)) !== realpathSync(dirname(fileURLToPath(import.meta.url)))) {
+  throw new Error('Documentation asset cache must stay inside the VitePress directory')
+}
+if (existsSync(publicImages) && dirname(realpathSync(publicImages)) !== realpathSync(assetCache)) {
+  throw new Error('Documentation asset staging must stay inside the VitePress cache')
+}
+rmSync(publicImages, { recursive: true, force: true })
+mkdirSync(publicImages)
+for (const directory of ['../../docs/macos/images/', '../../docs/common/images/']) {
+  const source = fileURLToPath(new URL(directory, import.meta.url))
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.png')) continue
+    const target = join(publicImages, entry.name)
+    if (existsSync(target)) throw new Error(`Duplicate documentation image: ${entry.name}`)
+    copyFileSync(join(source, entry.name), target)
+  }
+}
 
 export default defineConfig({
   lang: 'zh-CN',
@@ -26,7 +50,7 @@ export default defineConfig({
     ['meta', { name: 'theme-color', content: '#087c63' }]
   ],
   vite: {
-    publicDir: fileURLToPath(new URL('../../docs/images/', import.meta.url))
+    publicDir: publicImages
   },
   themeConfig: {
     logo: '/icon.png',

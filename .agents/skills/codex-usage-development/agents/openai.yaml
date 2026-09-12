@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage · 开发与交付"
+  short_description: "围绕用户目标控制改动范围，选择必要验证，减少返工并快速交付"
+  default_prompt: "使用 $codex-usage-development 完成当前开发任务，并给出与改动范围相称的验证证据。"

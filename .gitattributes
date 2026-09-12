@@ -17,5 +17,5 @@
 *.gz binary
 *.rtf binary
 # Preserve publisher bytes used by pinned license digests on every checkout.
-resources/third-party-licenses/** -text -whitespace
-resources/licenses/** -text -whitespace
+resources/macos/third-party-licenses/** -text -whitespace
+resources/windows/licenses/** -text -whitespace

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage · 产品与交互"
+  short_description: "从用户任务组织功能与布局，保持原生风格、状态连续和操作清晰"
+  default_prompt: "使用 $codex-usage-product-design 梳理当前界面的用户路径，并完成所需的设计或改进。"

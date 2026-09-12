@@ -30,6 +30,14 @@ git switch -c my-change origin/main
 
 若要精确复现本文的新配色，使用 `v1.0.1` 代替 `origin/main`。下方构建命令作用于所选检出；验证记录属于对应提交，不自动适用于未来改动。
 
+## 当前源码的目录与入口
+
+当前开发源码按 `src/backend/`、`src/macos/`、`src/windows/` 分组，工具位于 `tools/common/` 和对应平台目录。完整说明见[仓库目录介绍](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/PROJECT-STRUCTURE.md)。
+
+当前源码推荐在仓库根运行 `python3 -m tools.macos.fetch_runtime --arch arm64`、`python3 -m tools.macos.build --arch arm64`，输出为 `build/macos/arm64/Codex用量.app`；`python3 -m tools.macos.package` 输出到 `dist/macos/`。
+
+下方旧脚本命令适用于历史版本，也由当前源码的兼容入口保留，默认输出位置维持原样。历史 tag 中不存在新的模块入口；显式指定源码时，当前浮窗位于 `src/macos/Features/Floating/Capsule.swift`，旧 tag 位于 `Sources/Capsule.swift`。
+
 ## 按芯片构建
 
 先在仓库根目录运行测试：
@@ -54,7 +62,7 @@ python3 build.py --arch arm64
 
 结果位于 `build/arm64/Codex用量.app`。构建参数也支持 `universal` 双架构 App。按架构连续构建，避免并行写入共用的图标和模块缓存。
 
-运行组件固定为 Astral python-build-standalone 的 CPython 3.12.14 / 20260901 发布。`resources/runtimes/manifest.json` 记录下载地址、大小和 SHA-256；下载先写临时文件，验证成功后保存。存在不匹配的缓存时会报错，不静默覆盖。
+运行组件固定为 Astral python-build-standalone 的 CPython 3.12.14 / 20260901 发布。`resources/runtimes/manifest.json`（当前源码为 `resources/macos/runtimes/manifest.json`）记录下载地址、大小和 SHA-256；下载先写临时文件，验证成功后保存。存在不匹配的缓存时会报错，不静默覆盖。
 
 发行 ZIP 内已带对应运行组件。若要复用已有完整 App 的资源，在发行 ZIP 的 `source/` 目录执行：
 
@@ -92,7 +100,7 @@ Apple Silicon 本机构建检查将路径中的 `x86_64` 改为 `arm64`。主面
 
 ```sh
 python3 scripts/render_previews.py
-python3 scripts/render_previews.py --source Sources/Capsule.swift --output .local/previews
+python3 scripts/render_previews.py --output .local/previews
 ```
 
 工具需要 Command Line Tools，会编译真实绘制组件，生成深浅主题、额度边界、长文本和展开中间帧的 26 张 PNG，以及收起样式合集。全部数字、时间、模型和任务均为合成示例；不读取本机 Codex 日志、账号或偏好，不打开已安装 App 或可见窗口。
@@ -105,9 +113,11 @@ python3 scripts/render_previews.py --source Sources/Capsule.swift --output .loca
 
 ```sh
 python3 scripts/render_previews.py --output .local/previews
-cp .local/previews/compact-dark-50.png docs/images/compact-dark-50.png
-cp .local/previews/compact-light-50.png docs/images/compact-light-50.png
+cp .local/previews/compact-dark-50.png docs/macos/images/compact-dark-50.png
+cp .local/previews/compact-light-50.png docs/macos/images/compact-light-50.png
 ```
+
+上述同步路径适用于按平台整理后的当前源码；固定检出 `v1.0.1` 时，仍使用该版本原有的 `docs/images/` 目录。
 
 发布前检查两张示意图和相对链接，并标明示意图对应版本与合成数据来源。仅补充说明或替换示意图时，沿用已有代码验证结果，无需启动已安装应用或重测无关功能。生成方式来自 [当前源码的本地验证工具说明](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md#离屏界面预览)。
 
@@ -145,7 +155,7 @@ python3 scripts/verify_release.py
 
 ## 固定来源
 
-发行 tag 内的安装脚本保留构建时快照，仍可能指向上一版；v1.0.1 的安装助手作为 Release 的独立 `install.sh` 与 `install.sh.sha256` 资产提供。先得到两份最终 ZIP 的摘要，再生成、校验和发布助手资产，最后独立提交更新主线脚本的固定版本与摘要，避免 ZIP 内脚本引用 ZIP 自身摘要。维护安装器时应从最新主线创建分支；不要用发行 tag 内的旧安装脚本安装新 ZIP。具体步骤见[主线构建与发布说明](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/BUILDING.md)；不要重新打包并覆盖已发布的同名 ZIP。
+发行 tag 内的安装脚本保留构建时快照，仍可能指向上一版；v1.0.1 的安装助手作为 Release 的独立 `install.sh` 与 `install.sh.sha256` 资产提供。先得到两份最终 ZIP 的摘要，再生成、校验和发布助手资产，最后独立提交更新主线脚本的固定版本与摘要，避免 ZIP 内脚本引用 ZIP 自身摘要。维护安装器时应从最新主线创建分支；不要用发行 tag 内的旧安装脚本安装新 ZIP。具体步骤见[主线构建与发布说明](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/BUILDING.md)；不要重新打包并覆盖已发布的同名 ZIP。
 
 - [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1)
 - [构建与发布文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)

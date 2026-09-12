@@ -28,7 +28,7 @@ for (const directory of ['../../docs/macos/images/', '../../docs/common/images/'
 export default defineConfig({
   lang: 'zh-CN',
   title: 'Codex 用量',
-  description: 'Codex 用量 macOS 使用文档：Intel 与 Apple Silicon 安装、主面板、菜单栏、圆形浮窗、统计口径和问题排查。',
+  description: 'Codex 用量 Windows 与 macOS 使用文档：下载安装、Token 统计、预算提醒、任务监控、桌面浮窗和原生系统入口。',
   srcDir: 'content',
   base: '/codex-usage/',
   cleanUrls: false,
@@ -56,17 +56,24 @@ export default defineConfig({
     logo: '/icon.png',
     siteTitle: 'Codex 用量 · 文档',
     nav: [
-      { text: 'v1.0.1 下载', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1' }
+      { text: '下载安装', link: '/installation' },
+      { text: '平台差异', link: '/platforms' },
+      { text: '发行版本', items: [
+        { text: 'Windows · v1.0.2', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2' },
+        { text: 'macOS · v1.0.1', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1' }
+      ] }
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/Asher-XunZhang/codex-usage' }],
     sidebar: [
       { text: '开始使用', items: [
         { text: '概览', link: '/' },
         { text: '安装与首次启动', link: '/installation' },
-        { text: 'Intel 与其他问题排查', link: '/troubleshooting' }
+        { text: '平台支持与功能差异', link: '/platforms' },
+        { text: '问题排查', link: '/troubleshooting' }
       ] },
       { text: '使用文档', items: [
-        { text: '主面板、菜单栏与浮窗', link: '/user-guide' },
+        { text: 'Windows 使用指南', link: '/windows-guide' },
+        { text: 'macOS 使用指南', link: '/user-guide' },
         { text: '统计口径与隐私', link: '/metrics-and-privacy' },
         { text: '可选 Token 统计技能', link: '/optional-skill' }
       ] },

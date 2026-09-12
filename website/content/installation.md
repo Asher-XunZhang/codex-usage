@@ -1,10 +1,47 @@
 # 安装与首次启动
 
-发行 App 已包含离线运行组件，**无需另装 Python、Node.js、Homebrew 或开发工具**。使用过 Codex 才会有本机记账；账号额度查询需要本机 Codex 已登录。
+两端发行包都包含运行组件，使用者无需安装开发环境。使用过 Codex 才会有本机记账；账号额度查询需要本机 Codex 已登录。
+
+| 平台 | 正式下载 |
+| --- | --- |
+| Windows x64 · v1.0.2 | [下载 Windows ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip) |
+| macOS Apple Silicon · v1.0.1 | [下载 Apple Silicon ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip) |
+| macOS Intel · v1.0.1 | [下载 Intel ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip) |
+
+v1.0.2 仅更新 Windows，macOS 继续提供原来的 v1.0.1 包。[两端功能差异 →](./platforms.md)
+
+## Windows：解压后运行 {#windows}
+
+1. 下载上方 Windows x64 ZIP，完整解压到自己有写入权限的目录。
+2. 双击根目录的 `CodexUsage.exe`。保留同目录的 DLL、`python/`、`backend/` 和其他随包文件；不要只复制 EXE，也不要在 ZIP 内直接运行。
+3. 主面板打开后，在设置中确认 Codex 数据目录。默认使用 `CODEX_HOME`，未设置时为 `%USERPROFILE%\.codex`。
+4. 根据需要保留系统托盘或浮窗，开始查看用量、设置预算或选择监控任务。[Windows 使用指南 →](./windows-guide.md)
+
+应用自带 .NET 与 Python，无需管理员权限或额外运行时。当前实测 Windows 11 x64；其他 Windows 版本的兼容性见[验证范围](./validation.md)。下载包未作发布者数字签名，Windows 的来源提示与组织策略可能影响首次运行；请核对下载来源和文件完整性，不关闭全局安全检查。
+
+### Windows 更新与卸载
+
+在应用中选择「退出 Codex 用量」，再把新版本完整解压到一个独立目录并运行；确认可用后可删除旧程序目录。不要混合不同版本的 EXE、DLL 或运行组件，也不要同时运行两份副本。
+
+设置、预算、监控订阅与消息保存在 `%LOCALAPPDATA%\CodexUsageDashboard\desktop`，不在解压目录里。卸载只需退出并删除程序目录，保留数据便于以后恢复。不要删除 Codex 自身的 `.codex` 目录。
+
+### Windows 下载校验
+
+发行页提供 [Windows ZIP 的 SHA-256 文件](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip.sha256)。在 PowerShell 中计算下载文件摘要，与该文件核对：
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\codex-usage-desktop-v1.0.2-windows-x64.zip"
+```
+
+如果下载到其他目录，替换示例路径。摘要不符时重新下载完整 ZIP。
+
+## macOS：选择芯片与安装方式 {#macos}
+
+以下 macOS 安装助手与手动安装均使用 **v1.0.1**，无需另装 Python、Node.js、Homebrew 或开发工具。
 
 **选择一种安装方式即可：** 推荐使用快捷安装助手；也可手动下载 ZIP。已有版本请先按[迁移步骤](#已有版本)处理。
 
-## 快捷安装助手（推荐）
+### 快捷安装助手（推荐）
 
 安装助手下载正式的 **v1.0.1** App，包含[额度弧线配色](./user-guide.md#额度弧线配色)。以下入口固定到 v1.0.1 发行页的 `install.sh` 资产；运行前可下载审阅脚本中的版本和固定摘要。助手不会编译源码，验证边界见[验证与兼容性](./validation.md)。
 

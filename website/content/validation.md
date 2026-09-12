@@ -1,6 +1,26 @@
 # 验证与兼容性
 
-不同检查证明不同范围：架构和签名完整性通过，不等于 Apple 公证；Rosetta 执行通过，不等于所有实体 Intel Mac 通过。当前发行版为 v1.0.1。下方保留 v1.0.0 App、安装助手和配色开发阶段的历史验证记录；各项结果只适用于注明的版本与环境。v1.0.1 打包验证见[发行验证文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
+当前正式下载分别为 **Windows v1.0.2** 与 **macOS v1.0.1**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
+
+## Windows v1.0.2 的验证边界
+
+Windows 开发与交互验证在 Windows 11 x64 上进行。自动化检查使用合成用量、预算、任务与独立配置，覆盖以下范围：
+
+- 统计查询、筛选与导出；预算周期、草稿保存和错误恢复。
+- 主面板、浮窗、托盘详情的深浅主题、文字边界和键盘操作。
+- 圆环形变、整框拖动、贴边恢复、离开收起和菜单焦点返回。
+- 任务事件判定、订阅与未读分离、通知路由及重启去重。
+- 进程退出、独立主面板清理，以及发行包的运行组件和解包后源码检查。
+
+合成多屏矩形可验证几何规则，不能代表每一种真实显示器与缩放组合。后台模式会明确跳过可见菜单、焦点等前台检查，跳过不算通过。任务通知的系统提交、通知中心保存、横幅显示与用户点击是不同结果，Windows 勿扰和前台状态仍可能限制实际显示。
+
+正式资产和说明见 [Windows v1.0.2 发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2)。具体源码阶段记录和验证命令见[Windows 工程文档](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/windows/README.md)。历史测试数量和某次预览结果不自动代表后来发行包已重新通过同一套实机检查。
+
+本页不承诺所有 Windows 版本、ARM64 环境、全部多屏组合、组织限制下的通知或固定内存上限。Windows 工作集、私有内存与下文 macOS 的 physical footprint 不可直接横向比较。
+
+## macOS 已发布版本与历史记录
+
+macOS 下载继续使用 v1.0.1，打包验证见[固定版本文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。下方保留 v1.0.0 App、安装助手和配色开发阶段记录；结果只适用于注明的版本与环境，不表示本次重新发布或重新验收了 macOS。
 
 ## v1.0.0 正式发行记录
 

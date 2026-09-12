@@ -1,12 +1,12 @@
 # 可选的逐轮 Token 技能
 
-仓库还保留可复用的逐轮/任务 Token 统计技能和 Stop hook。它们是可选组件：**桌面 App 不依赖此技能，也不会替你修改 Codex 配置或自动启用 hook。** 只需要菜单栏、主面板或浮窗的用户无需安装它们。
+仓库还保留可复用的逐轮/任务 Token 统计技能和 Stop hook。它们是可选组件：**桌面 App 不依赖此技能，也不会替你修改 Codex 配置或自动启用 hook。** Windows 任务监控同样无需安装 hook；只使用托盘、菜单栏、主面板或浮窗的用户无需安装它们。
 
 ## 适合什么场景
 
 | 需求 | 使用方式 |
 | --- | --- |
-| 在原生窗口查看用量趋势和账户额度 | 使用桌面 App，见 [使用指南](./user-guide.md) |
+| 在原生窗口查看用量趋势和账户额度 | 使用桌面 App，见 [Windows 指南](./windows-guide.md)或 [macOS 指南](./user-guide.md) |
 | 在 Codex 任务中查看当前轮次或任务的已记账 Token | 按需运行 `token_usage.py`，或单独安装技能 |
 | 在任务结束事件中提供统计提示 | 自行选择是否配置 Stop hook |
 
@@ -14,14 +14,20 @@
 
 ## 独立运行统计脚本
 
-取得 [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 后，在仓库根目录运行：
+取得[当前源码](https://github.com/Asher-XunZhang/codex-usage)后，在仓库根目录运行。macOS 示例：
 
 ```sh
 python3 integrations/codex-token-usage/scripts/token_usage.py --help
 python3 integrations/codex-token-usage/scripts/token_usage.py --codex-home ~/.codex --format table
 ```
 
-脚本只使用 Python 标准库。请使用这台 Mac 实际可用的 Python 路径；这里的 `python3` 是示例，不是某位开发者的私有安装路径。
+Windows PowerShell 示例：
+
+```powershell
+python integrations/codex-token-usage/scripts/token_usage.py --codex-home "$env:USERPROFILE\.codex" --format table
+```
+
+脚本只使用 Python 标准库。独立运行脚本需要本机可用的 Python；安装正式桌面 App 不要求另装 Python。旧 v1.0.1 tag 仍使用 `skill/scripts/`，不要把旧源码版本与上面的新路径混用。
 
 在 Codex 任务环境中，`CODEX_THREAD_ID` 用于确定当前任务。缺少任务身份时，不应猜测或自动改成其他任务；可先查看 `--help`，再显式指定自己希望统计的任务或轮次。
 
@@ -50,4 +56,4 @@ hook 不会自行完成配置或建立信任；是否接入由使用者决定。
 
 ## 页面依据
 
-本页基于版本 [`v1.0.1`](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 的 [可选技能文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/SKILL.md) 与 [README](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/README.md)。
+目录与独立运行方式以[当前可选集成](https://github.com/Asher-XunZhang/codex-usage/tree/main/integrations/codex-token-usage)和[技能说明](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/SKILL.md)为准。

@@ -6,7 +6,7 @@ import { join, resolve, sep } from 'node:path'
 const root = resolve('.vitepress/dist')
 const origin = 'https://asher-xunzhang.github.io'
 const base = '/codex-usage/'
-const pages = ['index', 'installation', 'troubleshooting', 'user-guide', 'metrics-and-privacy', 'architecture', 'validation', 'development', 'optional-skill']
+const pages = ['index', 'installation', 'platforms', 'windows-guide', 'troubleshooting', 'user-guide', 'metrics-and-privacy', 'architecture', 'validation', 'development', 'optional-skill']
 const files = []
 function walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -17,6 +17,15 @@ function walk(dir) {
 }
 walk(root)
 for (const page of pages) assert.ok(existsSync(join(root, `${page}.html`)), `Missing page: ${page}`)
+const releases = [
+  'v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip',
+  'v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip',
+  'v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip'
+]
+for (const page of ['index', 'installation']) {
+  const html = readFileSync(join(root, `${page}.html`), 'utf8')
+  for (const asset of releases) assert.ok(html.includes(`releases/download/${asset}`), `Missing platform download ${asset}: ${page}`)
+}
 const anchors = new Map()
 function getAnchors(file) {
   if (!anchors.has(file)) {

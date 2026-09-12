@@ -56,6 +56,7 @@ internal sealed record TrayQuotaLine(string Label, string Remaining, string Rese
 internal sealed record TrayPreviewData(bool Light, string Total, string ExactTotal, string Input, string Output, string Cached,
     string Status, string QuotaStatus, IReadOnlyList<TrayQuotaLine> Quotas, IReadOnlyList<string> Budgets)
 {
+    internal string Monitor { get; init; } = "";
     internal static TrayPreviewData From(JsonObject state)
     {
         var today = state.O("today").O("summary"); var quota = state.O("quota");
@@ -79,7 +80,8 @@ internal sealed record TrayPreviewData(bool Light, string Total, string ExactTot
         if (quota.N("reset_count") is double count) quotaStatus += " · 重置卡 " + count.ToString("N0", CultureInfo.InvariantCulture) + " 张";
         return new(!Theme.Resolve(state.O("settings"), "tray"), J.Compact(today.N("total_tokens")), UsageNumbers.Exact(today["total_tokens"]),
             UsageNumbers.Exact(today["input_tokens"]), UsageNumbers.Exact(today["output_tokens"]), UsageNumbers.Exact(today["cached_input_tokens"]),
-            status, quotaStatus, quotas, budgetLines.Take(2).ToArray());
+            status, quotaStatus, quotas, budgetLines.Take(2).ToArray())
+        { Monitor = state.O("monitor").A("watches").Count > 0 || state.O("monitor").O("summary").I("unread") > 0 ? TaskMonitorVisual.SummaryText(state) : "" };
     }
 }
 
@@ -158,6 +160,10 @@ internal sealed class TrayPreview : Window
             foreach (string budget in data.Budgets.Take(1)) { var text = Text(budget, 11, secondary); text.MaxHeight = 32; text.Margin = new(0, 0, 0, 4); stack.Children.Add(text); }
         }
         var status = Text(data.Status, 11, secondary); status.MaxHeight = 32; status.Margin = new(0, 9, 0, 0); stack.Children.Add(status);
+        if (data.Monitor.Length > 0)
+        {
+            var monitor = Text("任务：" + data.Monitor, 11, secondary); monitor.Margin = new(0, 8, 0, 0); stack.Children.Add(monitor);
+        }
         var hint = Text("单击图标查看详情与操作", 11, secondary); hint.Margin = new(0, 6, 0, 0); stack.Children.Add(hint);
         return new Border { Width = 348, Background = bg, BorderBrush = line, BorderThickness = new(1), CornerRadius = new(13), Padding = new(18, 15, 18, 14), Child = stack };
     }

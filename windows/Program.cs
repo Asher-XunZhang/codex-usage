@@ -44,6 +44,29 @@ internal static class Program
             catch (Exception e) { if (output is not null) J.Write(output, J.Obj(("error", e.Message))); return 1; }
         }
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; Theme.Initialize();
+        if (args.Contains("--monitor-tests"))
+        {
+            try { TaskMonitorTests.Run(); TaskNotificationTests.Run(); if (output != null) J.Write(output, J.Obj(("success", true), ("checks", "task-monitor-core-and-notification-policy"))); return 0; }
+            catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); return 1; }
+        }
+        if (args.Contains("--monitor-ui-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await TaskMonitorUiTests.RunAsync(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success", true) ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--monitor-floating-tests"))
+        {
+            app.Startup += (_, _) =>
+            {
+                try { var result = TaskMonitorFloatingTests.Run(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success", true) ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
         if (args.Contains("--layout-tests"))
         {
             app.Startup += async (_, _) =>
@@ -197,8 +220,22 @@ internal static class Program
             app.Startup += async (_, _) => { try { await Previews.Render(directory); J.Write(Path.Combine(directory, "result.json"), J.Obj(("success", true))); app.Shutdown(); } catch (Exception e) { J.Write(Path.Combine(directory, "result.json"), J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); } };
             return app.Run();
         }
+        bool notificationLaunch = !main && !demo && TaskNotifications.IsActivationLaunch();
         using var mutex = new Mutex(true, "Local\\" + Paths.Pipe + (main ? "-main-lock" : "-host-lock"), out bool owned);
-        if (!owned) { try { Ipc.Send(J.Obj(("action", main ? "focus" : "main"), ("page", Arg("--page")), ("budgetID", Arg("--budget-id"))), main ? Paths.Pipe + "-main" : Paths.Pipe).GetAwaiter().GetResult(); return 0; } catch (Exception) { return 1; } }
+        if (!owned && notificationLaunch)
+        {
+            TaskNotifications? relay = null; var timeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            timeout.Tick += (_, _) => { timeout.Stop(); app.Shutdown(1); };
+            app.Startup += (_, _) =>
+            {
+                relay = new TaskNotifications(request => app.Dispatcher.BeginInvoke(async () =>
+                {
+                    try { await Ipc.Send(request); app.Shutdown(); } catch { app.Shutdown(1); }
+                })); timeout.Start();
+            };
+            app.Exit += (_, _) => { timeout.Stop(); relay?.Dispose(); }; return app.Run();
+        }
+        if (!owned) { try { Ipc.Send(J.Obj(("action", main ? "focus" : "main"), ("page", Arg("--page")), ("budgetID", Arg("--budget-id")), ("monitorID", Arg("--monitor-id")), ("messageID", Arg("--message-id"))), main ? Paths.Pipe + "-main" : Paths.Pipe).GetAwaiter().GetResult(); return 0; } catch (Exception) { return 1; } }
         Host? host = null; Process? parentWatch = null; using var stop = new CancellationTokenSource();
         app.DispatcherUnhandledException += (_, e) => { try { Directory.CreateDirectory(Paths.Base); J.Write(Path.Combine(Paths.Base, "last-error.json"), J.Obj(("at", J.Now), ("error", e.Exception.ToString()))); } catch { } e.Handled = true; MessageBox.Show(e.Exception.Message, "Codex 用量", MessageBoxButton.OK, MessageBoxImage.Error); };
         app.Exit += (_, _) => { stop.Cancel(); host?.Dispose(); parentWatch?.Dispose(); };
@@ -213,7 +250,7 @@ internal static class Program
                     _ = parentWatch.WaitForExitAsync(stop.Token).ContinueWith(t => { if (!t.IsCanceled) app.Dispatcher.BeginInvoke(() => app.Shutdown()); }, TaskScheduler.Default);
                     JsonObject state = await Ipc.Send(J.Obj(("action", "state")));
                     Theme.Apply(Theme.Resolve(state.O("settings"), "main"));
-                    var window = new MainWindow(state, Arg("--page"), Arg("--budget-id"));
+                    var window = new MainWindow(state, Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"));
                     if (Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") == "1") { window.ShowActivated = false; window.ShowInTaskbar = false; window.Opacity = 0; window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = window.Top = -12000; }
                     _ = Ipc.Listen(Paths.Pipe + "-main", request => app.Dispatcher.InvokeAsync(() => window.Handle(request)).Task.Unwrap(), stop.Token,
                         request => { if (request.S("action") == "close") app.Dispatcher.BeginInvoke(() => _ = window.CompleteClose()); },
@@ -223,7 +260,7 @@ internal static class Program
                 else
                 {
                     var settings = new Settings(); Theme.Apply(Theme.Resolve(settings.Data, "main")); host = new Host(demo, args.Contains("--no-quota"));
-                    if (!args.Contains("--tray")) await host.OpenMain();
+                    if (!args.Contains("--tray") && !notificationLaunch) await host.OpenMain(Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"));
                 }
             }
             catch (Exception e) { J.Write(Path.Combine(Paths.Base, "last-error.json"), J.Obj(("error", e.ToString()))); MessageBox.Show(e.Message, "Codex 用量启动失败"); app.Shutdown(1); }

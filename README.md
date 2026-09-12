@@ -124,4 +124,4 @@ python3 build.py --arch arm64
 
 ## Windows
 
-提供用量概览、预算管理、托盘与浮窗显示，支持主题、筛选、CSV 导出和贴边收起。 Windows 使用、构建和验证请见 [Windows 说明](docs/WINDOWS.md)。macOS 已发布版本的安装链接保持不变。
+提供用量、预算与任务监控。可选择正在执行的任务，设置本轮或每轮提醒，查看未读消息；取消监控只停止提醒，不会停止 Codex 任务。 Windows 使用、构建和验证请见 [Windows 说明](docs/WINDOWS.md)。macOS 已发布版本的安装链接保持不变。

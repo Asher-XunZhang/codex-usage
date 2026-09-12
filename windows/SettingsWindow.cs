@@ -49,7 +49,7 @@ internal sealed class SettingsWindow : Window
         SetResourceReference(BackgroundProperty, "BackgroundBrush"); SetResourceReference(ForegroundProperty, "ForegroundBrush");
         var root = new DockPanel { Margin = new Thickness(20) }; root.SetResourceReference(Panel.BackgroundProperty, "BackgroundBrush");
         var navigation = new StackPanel { Orientation = Orientation.Horizontal };
-        foreach (var (id, label) in new[] { ("appearance", "外观"), ("display", "显示与浮窗"), ("updates", "数据与更新"), ("help", "帮助与恢复") })
+        foreach (var (id, label) in new[] { ("appearance", "外观"), ("display", "显示与提醒"), ("updates", "数据与更新"), ("help", "帮助与恢复") })
         {
             var tab = new System.Windows.Controls.Primitives.ToggleButton { Content = label, Padding = new Thickness(11, 6, 11, 6) };
             tabs[id] = tab; navigation.Children.Add(tab); tab.Click += (_, _) => SelectPage(id);
@@ -149,6 +149,8 @@ internal sealed class SettingsWindow : Window
         Toggle("贴边自动隐藏", "edgeAutoHide", true);
         Picker("贴边指示条", [new("remaining", "显示剩余额度"), new("used", "显示已用额度")], state => state.O("settings").O("floating").S("edgeMetric", "remaining"), value => Queue("edgeMetric", J.Obj(("action", "floating-settings"), ("patch", J.Obj(("edgeMetric", value))))));
         body.Children.Add(Text("主动收起会变回圆环；鼠标离开再进入后才会再次自动展开。收起与隐藏均不会退出应用。"));
+        Divider(); Heading("任务提醒", "收起浮窗、隐藏至托盘或关闭主面板都继续监控。提醒方式、声音和暂停通知在统一入口管理。 ");
+        body.Children.Add(Command("任务提醒设置…", () => send(J.Obj(("action", "monitor-settings-dialog")))));
     }
     private static TextBox Readout() => new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(0), Margin = new Thickness(0, 8, 0, 8), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 160 };
     private void BuildUpdates()

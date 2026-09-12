@@ -44,6 +44,8 @@ internal sealed partial class CapsuleWindow : Window
     private Rect? hotspot;
     private ContextMenu? activeMenu;
     internal ContextMenu? ActiveMenu => activeMenu;
+    private long focusIntent;
+    internal void NewFocusIntent() => focusIntent++;
     private Point? restoredPixels;
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X, Y; }
@@ -303,6 +305,9 @@ internal sealed partial class CapsuleWindow : Window
         if (floating.ContainsKey("keepExpanded")) SetKeepsExpanded(floating.B("keepExpanded"));
         UpdateDockSettings(floating);
     }
+    internal bool IsMonitorTaskVisible(string taskID) => IsVisible && !HiddenAtEdge && !edgeAnimating && animation is null &&
+        Surface.Edge == CapsuleEdge.None && Surface.Expansion >= .999 && Surface.MonitorMode &&
+        TaskMonitorVisual.Featured(Surface.State).Any(task => task.S("id") == taskID);
     internal void SetKeepsExpanded(bool value)
     {
         if (KeepsExpanded == value) return;
@@ -341,6 +346,7 @@ internal sealed partial class CapsuleWindow : Window
     internal void TrackPointer(Point screen) { if (!menu && !pressed && !IsHotspot(screen)) hotspot = null; }
     public void Press(bool value)
     {
+        if (value) NewFocusIntent();
         pressed = value;
         if (value) { hideDelay.Stop(); wakeDelay.Stop(); awaitingRingEntry = false; if (HiddenAtEdge || edgeAnimating) RevealEdge(false, false); departure.Stop(); dismissedPointer = null; pointerTracking = false; pointerRetention = null; StopAnimation(true); }
         else if (!menu) ResumePointer();
@@ -419,12 +425,14 @@ internal sealed partial class CapsuleWindow : Window
         if (name == "collapse") { Collapse(); return; }
         if (name == "filters") { Surface.ToggleFilters(); return; }
         if (name == "filtersReset") { await action("filters-reset", null); return; }
-        if (name is "contentUsage" or "contentBudget") { await action("content", name == "contentUsage" ? "usage" : "budget"); return; }
+        if (name is "contentUsage" or "contentBudget" or "contentMonitor") { await action("content", name == "contentUsage" ? "usage" : name == "contentBudget" ? "budget" : "monitor"); return; }
+        if (name.StartsWith("monitorDetail:", StringComparison.Ordinal)) { await action("monitorDetail", name[14..]); return; }
         if (name is "context" or "more" or "period" or "model" or "task" or "content" or "budget" or "budgetPause") { await ShowMenu(name); return; }
         await action(name, null);
     }
     private void CancelMenu()
     {
+        NewFocusIntent();
         var context = activeMenu; activeMenu = null; menu = false;
         if (context?.IsOpen == true) context.IsOpen = false;
     }
@@ -436,6 +444,7 @@ internal sealed partial class CapsuleWindow : Window
     public async Task ShowMenu(string name)
     {
         if (menu || pressed || closed) return;
+        long menuFocusIntent = ++focusIntent;
         bool keyboardMenu = Surface.KeyboardInteraction;
         string? returnFocus = Surface.KeyboardAction;
         hideDelay.Stop(); wakeDelay.Stop(); if (HiddenAtEdge || edgeAnimating) RevealEdge(false, false);
@@ -466,7 +475,7 @@ internal sealed partial class CapsuleWindow : Window
         {
             foreach (var p in new[] { ("1", "今天"), ("7", "7 天"), ("30", "30 天"), ("90", "90 天"), ("all", "全部") }) Add(p.Item2, "period", p.Item1, f.S("days", "1") == p.Item1);
         }
-        else if (name == "content") { Add("用量统计", "content", "usage", !Surface.BudgetMode); Add("预算提醒", "content", "budget", Surface.BudgetMode); }
+        else if (name == "content") { Add("用量统计", "content", "usage", !Surface.BudgetMode && !Surface.MonitorMode); Add("预算提醒", "content", "budget", Surface.BudgetMode); Add("任务监控", "content", "monitor", Surface.MonitorMode); }
         else if (name == "budget")
         {
             foreach (var row in Surface.State.O("budgets").A("rules").Rows()) Add(row.S("name"), "budget", row.S("id"), f.S("budgetID") == row.S("id"));
@@ -495,6 +504,9 @@ internal sealed partial class CapsuleWindow : Window
         }
         else
         {
+            Section("任务监控");
+            Add("选择任务与查看消息…", "monitorManage");
+            Add("任务提醒设置…", "monitorSettings");
             Section("窗口行为");
             Add("保持展开（离开鼠标不收起）", "keepExpanded", selected: KeepsExpanded);
             Add("始终置顶浮窗", "pin", selected: Topmost);
@@ -529,7 +541,10 @@ internal sealed partial class CapsuleWindow : Window
                 // ownership. A dismissed background menu must never activate its window.
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    if (closed || !IsVisible || activeMenu != null) return;
+                    // Closing the popup releases interaction before an async
+                    // command or this dispatcher operation finishes. A newer
+                    // key, drag, collapse or menu owns focus from that point on.
+                    if (closed || !IsVisible || activeMenu != null || focusIntent != menuFocusIntent) return;
                     IntPtr foreground = GetForegroundWindow();
                     bool ownsForeground = foreground != IntPtr.Zero && (foreground == Handle || foreground == menuHandle);
                     if (ShouldRestoreMenuFocus(keyboardMenu, selection?.command, ownsForeground))

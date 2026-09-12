@@ -101,13 +101,13 @@ internal static class TaskMonitorVisual
     internal static string SourceText(JsonObject state)
     {
         var monitor = state.O("monitor"); string error = monitor.S("error");
-        if (error.Length > 0) return "监控来源异常 · 可检查连接";
+        if (error.Length > 0) return "监控存储异常 · 可重试检查";
         return monitor.O("sourceStatus").S("status") switch
         {
             "available" => "本地监控来源可用",
             "checking" or "loading" => "正在检查监控来源…",
             "partial" => "部分监控来源待确认",
-            "unavailable" => "监控来源异常 · 可检查连接",
+            "unavailable" => "任务来源不可用 · 请检查目录",
             _ => "监控来源待检查"
         };
     }

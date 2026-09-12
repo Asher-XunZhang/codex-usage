@@ -68,7 +68,7 @@ public sealed class MainWindow : Window
     private readonly ScrollViewer usageScroller = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, CanContentScroll = false };
     private readonly UniformGrid metrics = new() { Columns = 5 };
     private readonly WrapPanel rangeControls = new(), detailControls = new();
-    private readonly ToggleButton usageTab = new() { Content = "用量概览", MinWidth = 94 }, budgetTab = new() { Content = "预算", MinWidth = 74 }, monitorTab = new() { Content = "任务监控", MinWidth = 116 };
+    private readonly ToggleButton usageTab = new() { Content = "用量概览", MinWidth = 94 }, budgetTab = new() { Content = "预算管理", MinWidth = 94 }, monitorTab = new() { Content = "任务监控", MinWidth = 116 };
     private readonly TextBlock status = Label("正在准备本机统计…", 12), coverage = Label("仅统计这台电脑的已记录用量 · 日界线 UTC+08:00", 11);
     private readonly TextBlock sharedStatus = Label("本机用量统计", 11);
     private string statusMessage = "正在准备本机统计…";
@@ -92,10 +92,10 @@ public sealed class MainWindow : Window
     private string? pendingBudget;
     private string viewingSignature = "", choicesStamp = "";
     private string monitorViewingSignature = "";
-    private string? pendingMonitor, pendingMessage;
+    private string? pendingMonitor, pendingMessage, pendingMonitorList;
     private string? appliedThemePreference;
 
-    public MainWindow(JsonObject initial, string? page = null, string? budgetId = null, string? monitorId = null, string? messageId = null)
+    public MainWindow(JsonObject initial, string? page = null, string? budgetId = null, string? monitorId = null, string? messageId = null, string? monitorList = null)
     {
         state = initial.Copy(); demo = state.B("demo");
         Title = "Codex 用量"; Width = 1100; Height = 780; MinWidth = 760; MinHeight = 640;
@@ -108,7 +108,7 @@ public sealed class MainWindow : Window
         string requestedPage = page ?? settings.S("mainPage", "usage");
         this.page = requestedPage is "budget" or "budgets" ? "budget" : requestedPage == "monitor" ? "monitor" : "usage";
         pendingBudget = budgetId;
-        pendingMonitor = monitorId; pendingMessage = messageId;
+        pendingMonitor = monitorId; pendingMessage = messageId; pendingMonitorList = monitorList;
         budget = new BudgetView(SendHost, SetStatus);
         monitor = new TaskMonitorView(SendHost, SetStatus);
         monitor.ViewingChanged += (_, _) => _ = PublishViewing();
@@ -138,7 +138,8 @@ public sealed class MainWindow : Window
         {
             ApplyHost(state); SelectPage(this.page, false);
             if (pendingBudget != null) { budget.Select(pendingBudget); pendingBudget = null; }
-            if (pendingMonitor != null || pendingMessage != null) { SelectPage("monitor", false); monitor.Select(pendingMonitor ?? "", pendingMessage ?? ""); pendingMonitor = pendingMessage = null; }
+            if (pendingMonitorList == "messages") { SelectPage("monitor", false); monitor.SelectMessages(); pendingMonitor = pendingMessage = pendingMonitorList = null; }
+            else if (pendingMonitor != null || pendingMessage != null) { SelectPage("monitor", false); monitor.Select(pendingMonitor ?? "", pendingMessage ?? ""); pendingMonitor = pendingMessage = null; }
             if (demo) { Render(state.O("usage")); return; }
             started = true; pollTimer.Start();
             await EnsureService(); await LoadUsage();
@@ -647,6 +648,7 @@ public sealed class MainWindow : Window
                     ("canExport", export.IsEnabled), ("queryPending", usageSession.NeedsRead), ("settingsPending", settingsQueue.HasPending),
                     ("frame", J.Obj(("width", ActualWidth), ("height", ActualHeight))), ("monitor", monitor.Inspect()));
             case "focus":
+                if (request.S("monitorList") == "messages" && request["state"] is JsonObject messageState) ApplyHost(messageState);
                 bool backgroundTest = Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") == "1";
                 if (backgroundTest) { ShowActivated = false; Opacity = 0; WindowStartupLocation = WindowStartupLocation.Manual; Left = -12000; Top = -12000; }
                 if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
@@ -654,7 +656,8 @@ public sealed class MainWindow : Window
                 string selected = request.S("page"); if (selected.Length > 0) SelectPage(selected);
                 string id = request.S("budgetID", request.S("budgetId")); if (id.Length > 0) { SelectPage("budget"); budget.Select(id, request.B("edit")); }
                 string monitorID = request.S("monitorID", request.S("monitorId")), messageID = request.S("messageID", request.S("messageId"));
-                if (selected == "monitor" || monitorID.Length > 0 || messageID.Length > 0) { SelectPage("monitor"); monitor.Select(monitorID, messageID); }
+                if (request.S("monitorList") == "messages") { SelectPage("monitor"); monitor.SelectMessages(); }
+                else if (selected == "monitor" || monitorID.Length > 0 || messageID.Length > 0) { SelectPage("monitor"); monitor.Select(monitorID, messageID); }
                 break;
             case "refresh":
                 string refreshID = request.S("refreshID"); if (refreshID.Length > 0) refreshIDs.Add(refreshID);

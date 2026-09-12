@@ -55,7 +55,8 @@ internal sealed partial class CapsuleWindow
         if (Surface is null || closed || compactBounds is not Rect compact) return;
         compactBounds = new(compact.TopLeft, new Size(76 * newDpi.DpiScaleX, 76 * newDpi.DpiScaleY));
         if (rebuildingEnvelope) { pendingEnvelopeDpi = true; return; }
-        if (pressed && Surface.RingVisible)
+        if (expandedDragging) MoveExpandedDrag(expandedLastScreen);
+        else if (pressed && Surface.RingVisible)
         {
             // The suggested HWND rectangle belongs to the large envelope. The
             // physical pointer grip remains anchored to the logical compact rect.
@@ -188,6 +189,7 @@ internal sealed partial class CapsuleWindow
     }
     internal Point BeginDrag(Point pressPoint)
     {
+        expandedDragging = false; panelOffsetDip = null;
         manuallyCollapsed = false;
         hideDelay.Stop(); wakeDelay.Stop(); StopAnimation(); edgeAnimating = false;
         var dpi = VisualTreeHelper.GetDpi(this);

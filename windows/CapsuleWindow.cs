@@ -32,12 +32,15 @@ internal sealed partial class CapsuleWindow : Window
     private bool manuallyCollapsed, leftAfterCollapse;
     private readonly DispatcherTimer departure = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(90) };
     private readonly DispatcherTimer bridgeWatch = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(80) };
+    private readonly DispatcherTimer hoverDelay = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(140) };
     internal int HoverEventCount { get; private set; }
     internal int ExpansionTransitions { get; private set; }
     private EventHandler? animation;
     private bool expanded, menu, pressed;
     private bool closed;
     public bool KeepsExpanded { get; private set; }
+    internal bool MonitorMutationPending { get; private set; }
+    internal bool MonitorCheckPending { get; private set; }
     private Rect? compactBounds;
     private Rect? panelBounds;
     private bool rebuildingEnvelope, pendingEnvelopeDpi;
@@ -103,11 +106,20 @@ internal sealed partial class CapsuleWindow : Window
             {
                 pendingEnvelopeDpi = false;
                 var dpi = VisualTreeHelper.GetDpi(this);
+                if (expandedDragging)
+                    compactBounds = CapsuleExpandedDragPlacement.AtPointer(expandedLastScreen, expandedGripDip, -(panelOffsetDip ?? new Vector()), dpi).Compact;
                 var compact = InitialCompactBounds();
                 compactBounds = new(compact.TopLeft, new Size(76 * dpi.DpiScaleX, 76 * dpi.DpiScaleY));
                 compact = compactBounds.Value;
                 var monitor = MonitorAt(compact);
-                panelBounds = CapsulePlacement.Expanded(compact, monitor.Work, dpi);
+                if (panelOffsetDip is Vector offset)
+                {
+                    var panel = new Rect(compact.X + offset.X * dpi.DpiScaleX, compact.Y + offset.Y * dpi.DpiScaleY, 336 * dpi.DpiScaleX, 410 * dpi.DpiScaleY);
+                    if (!expandedDragging) panel = CapsuleExpandedDragPlacement.Clamp(new(panel, compact), monitor.Work, dpi).Panel;
+                    panelBounds = panel;
+                    panelOffsetDip = new((panel.X - compact.X) / dpi.DpiScaleX, (panel.Y - compact.Y) / dpi.DpiScaleY);
+                }
+                else panelBounds = CapsulePlacement.Expanded(compact, monitor.Work, dpi);
                 var envelope = Rect.Union(compact, panelBounds.Value);
                 // Reserve a nearby tab even while autohide is disabled, so enabling
                 // it later does not resize the HWND merely to show the indicator.
@@ -136,6 +148,7 @@ internal sealed partial class CapsuleWindow : Window
     private void StopAnimation(bool freeze = false)
     {
         if (animation != null) { CompositionTarget.Rendering -= animation; animation = null; }
+        releaseSettling = false;
         // Raw progress and any edge override already describe the exact visible
         // frame. A press/menu freezes that frame without moving or resizing its HWND.
     }
@@ -147,10 +160,12 @@ internal sealed partial class CapsuleWindow : Window
         this.ownsPointer = ownsPointer ?? (p => GetAncestor(WindowFromPoint(new NativePoint { X = (int)Math.Round(p.X), Y = (int)Math.Round(p.Y) }), 2) == Handle);
         departure.Tick += (_, _) => ConfirmDeparture();
         bridgeWatch.Tick += CheckPointerBridge;
+        hoverDelay.Tick += (_, _) => { hoverDelay.Stop(); EnterPointer(true); };
         Title = "Token 胶囊"; Width = 76; Height = 76; ResizeMode = ResizeMode.NoResize;
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
         ToolTipService.SetIsEnabled(this, false);
         ShowInTaskbar = false; ShowActivated = false; Topmost = true;
+        FocusVisualStyle = null; // Surface owns the single, per-action focus indicator.
         Surface = new CapsuleSurface(this); Content = Surface;
         InputMethod.SetIsInputMethodEnabled(this, false);
         Left = SystemParameters.WorkArea.Right - 214; Top = SystemParameters.WorkArea.Top + 28;
@@ -168,7 +183,7 @@ internal sealed partial class CapsuleWindow : Window
             RestoreDock();
             if (showExpanded) Expand(true, false);
         };
-        Closed += (_, _) => { closed = true; DisposeDocking(); departure.Stop(); bridgeWatch.Stop(); StopAnimation(); activeMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false); };
+        Closed += (_, _) => { closed = true; DisposeDocking(); departure.Stop(); bridgeWatch.Stop(); hoverDelay.Stop(); StopAnimation(); activeMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false); };
         PreviewKeyDown += async (_, e) =>
         {
             Key key = CapsuleSurface.InputKey(e.Key, e.SystemKey, e.ImeProcessedKey);
@@ -188,7 +203,7 @@ internal sealed partial class CapsuleWindow : Window
         {
             if (!IsVisible)
             {
-                departure.Stop(); bridgeWatch.Stop(); pointerTracking = false; pointerRetention = null; dismissedPointer = null;
+                departure.Stop(); bridgeWatch.Stop(); hoverDelay.Stop(); pointerTracking = false; pointerRetention = null; dismissedPointer = null;
                 // An explicit hide ends this pointer interaction. Showing the
                 // capsule later starts fresh while retaining the saved preference.
                 manuallyCollapsed = false; leftAfterCollapse = false;
@@ -219,31 +234,43 @@ internal sealed partial class CapsuleWindow : Window
         HoverEventCount++;
         EnterPointer();
     }
-    private void EnterPointer()
+    private void EnterPointer(bool hoverConfirmed = false)
     {
         if (HandleDockPointer()) return;
-        if (closed || !IsVisible || menu || pressed || readPointer() is not Point p || !PointerOverVisible()) return;
+        if (closed || !IsVisible || menu || pressed || releaseSettling || Mouse.LeftButton == MouseButtonState.Pressed || readPointer() is not Point p || !PointerOverVisible()) return;
         if (manuallyCollapsed && !leftAfterCollapse) return;
         // Native hit-test changes while morphing can re-enter at the same screen point.
         // A completed dismissal needs actual pointer movement before it can reopen.
         if (dismissedPointer is Point previous && (p - previous).Length < 1) return;
         if (!ownsPointer(p)) return;
+        // Give a press on the compact shape priority over automatic expansion.
+        // Once expansion has begun, a press can still claim it as a compact drag.
+        if (!hoverConfirmed && !expanded && Surface.Expansion <= .001)
+        {
+            departure.Stop();
+            if (!hoverDelay.IsEnabled) hoverDelay.Start();
+            return;
+        }
         manuallyCollapsed = false;
-        hideDelay.Stop(); departure.Stop(); dismissedPointer = null; pointerTracking = true; Expand(true);
+        hoverDelay.Stop(); hideDelay.Stop(); departure.Stop(); dismissedPointer = null; pointerTracking = true; Expand(true);
     }
     internal void PointerLeft()
     {
         HoverEventCount++;
+        if (!PointerOverVisible()) hoverDelay.Stop();
         if (manuallyCollapsed)
         {
             if (readPointer() is not Point collapsedPointer || !ContainsPointer(CompactPixelBounds, 0, collapsedPointer)) leftAfterCollapse = true;
             return;
         }
-        if (closed || !IsVisible || menu || pressed || KeepsExpanded || Surface.KeyboardInteraction) return;
+        // A synthetic Leave while the pointer is still on the compact shape
+        // must not schedule a 90 ms dismissal that defeats the 140 ms hover wait.
+        if (!expanded && Surface.Expansion <= .001) return;
+        if (closed || !IsVisible || menu || pressed || releaseSettling || KeepsExpanded || Surface.KeyboardInteraction) return;
         // Layout/hit-test changes can emit MouseLeave without physical pointer movement.
         // Keep the interaction in screen coordinates until it leaves the expanded target.
         if (HiddenAtEdge || edgeAnimating) { CheckDockPointer(); return; }
-        if (pointerTracking && RetainsPointer() && (IsAnimating || readPointer() is Point p && OwnsInteraction(p))) return;
+        if (pointerTracking && RetainsPointer() && (IsAnimating || readPointer() is Point p && OwnsInteraction(p))) { bridgeWatch.Start(); return; }
         QueueDeparture();
     }
     private void QueueDeparture()
@@ -253,18 +280,18 @@ internal sealed partial class CapsuleWindow : Window
     private void ConfirmDeparture()
     {
         departure.Stop();
-        if (closed || !IsVisible || menu || pressed || KeepsExpanded || Surface.KeyboardInteraction) return;
-        if (pointerTracking && RetainsPointer() && (IsAnimating || readPointer() is Point p && OwnsInteraction(p))) return;
+        if (closed || !IsVisible || menu || pressed || releaseSettling || KeepsExpanded || Surface.KeyboardInteraction) return;
+        if (pointerTracking && RetainsPointer() && (IsAnimating || readPointer() is Point p && OwnsInteraction(p))) { bridgeWatch.Start(); return; }
         DismissHover();
     }
     private void DismissHover()
     {
-        departure.Stop(); bridgeWatch.Stop(); dismissedPointer = readPointer(); pointerTracking = false; pointerRetention = null;
+        hoverDelay.Stop(); departure.Stop(); bridgeWatch.Stop(); dismissedPointer = readPointer(); pointerTracking = false; pointerRetention = null;
         Expand(false); CheckDockPointer();
     }
     internal void PointerMoved(Point screen)
     {
-        if (closed || !IsVisible || menu || pressed) return;
+        if (closed || !IsVisible || menu || pressed || releaseSettling) return;
         if (HandleDockPointer()) return;
         if (dismissedPointer is Point previous)
         {
@@ -324,6 +351,10 @@ internal sealed partial class CapsuleWindow : Window
     }
     public void Restore(JsonObject floating)
     {
+        // End a live gesture before replacing its compact anchor and panel offset.
+        // Cancellation may clamp the old drag position.
+        if (Handle != IntPtr.Zero) { CancelMenu(); pressed = false; Surface.CancelInteraction(); CancelDocking(); StopAnimation(); }
+        RestorePanelOffset(floating);
         var dpi = VisualTreeHelper.GetDpi(this); var compact = InitialCompactBounds();
         double left = floating.N("pixelLeft") ?? (floating.N("left") is double x ? x * dpi.DpiScaleX : compact.Left);
         double top = floating.N("pixelTop") ?? (floating.N("top") is double y ? y * dpi.DpiScaleY : compact.Top);
@@ -332,7 +363,7 @@ internal sealed partial class CapsuleWindow : Window
         restoredDock = floating.Copy();
         if (Handle != IntPtr.Zero)
         {
-            CancelMenu(); CancelDocking(); StopAnimation(); pressed = false; Surface.CancelInteraction(); RestoreDock();
+            RestoreDock();
         }
         else { Left = left / dpi.DpiScaleX; Top = top / dpi.DpiScaleY; }
     }
@@ -348,25 +379,27 @@ internal sealed partial class CapsuleWindow : Window
     {
         if (value) NewFocusIntent();
         pressed = value;
-        if (value) { hideDelay.Stop(); wakeDelay.Stop(); awaitingRingEntry = false; if (HiddenAtEdge || edgeAnimating) RevealEdge(false, false); departure.Stop(); dismissedPointer = null; pointerTracking = false; pointerRetention = null; StopAnimation(true); }
+        if (value) { hoverDelay.Stop(); hideDelay.Stop(); wakeDelay.Stop(); awaitingRingEntry = false; if (HiddenAtEdge || edgeAnimating) RevealEdge(false, false); departure.Stop(); dismissedPointer = null; pointerTracking = false; pointerRetention = null; StopAnimation(true); }
         else if (!menu) ResumePointer();
     }
     public void MoveBy(double x, double y, Point origin, Rect? savedHotspot)
     {
+        if (expandedDragging) { MoveExpandedDrag(expandedPressScreen + new Vector(x, y)); return; }
         var dpi = VisualTreeHelper.GetDpi(this);
         compactBounds = new(origin.X + x, origin.Y + y, 76 * dpi.DpiScaleX, 76 * dpi.DpiScaleY);
         RebuildEnvelope();
         if (savedHotspot is Rect r) { r.Offset(x, y); hotspot = r; }
     }
     public Rect? Hotspot => hotspot;
-    public async Task FinishDrag() { FinishDockDrag(); await SaveOrigin(); }
+    public async Task FinishDrag() { if (expandedDragging) FinishExpandedDrag(); else FinishDockDrag(); await SaveOrigin(); }
     public async Task SaveOrigin()
     {
         if (closed) return;
         var dpi = VisualTreeHelper.GetDpi(this); var bounds = InitialCompactBounds();
         var monitor = MonitorAt(bounds);
         await action("position", J.Text(J.Obj(("left", bounds.Left / dpi.DpiScaleX), ("top", bounds.Top / dpi.DpiScaleY), ("pixelLeft", bounds.Left), ("pixelTop", bounds.Top),
-            ("dockEdge", DockEdge.ToString()), ("monitor", monitor.Id), ("monitorX", (bounds.X - monitor.Work.X) / dpi.DpiScaleX), ("monitorY", (bounds.Y - monitor.Work.Y) / dpi.DpiScaleY))));
+            ("dockEdge", DockEdge.ToString()), ("monitor", monitor.Id), ("monitorX", (bounds.X - monitor.Work.X) / dpi.DpiScaleX), ("monitorY", (bounds.Y - monitor.Work.Y) / dpi.DpiScaleY),
+            ("panelOffsetX", (double?)null), ("panelOffsetY", (double?)null))));
     }
     public void Expand(bool target, bool animate = true)
     {
@@ -381,6 +414,9 @@ internal sealed partial class CapsuleWindow : Window
         if (panelBounds is null || Surface.CompactBounds is null) RebuildEnvelope();
         if (!expanded && target && Surface.Expansion <= .001)
         {
+            // Each compact-to-panel cycle selects its direction from current
+            // available space. A previous expanded drag is not a permanent side.
+            panelOffsetDip = null; RebuildEnvelope();
             hotspot = compactBounds;
         }
         expanded = target;
@@ -394,7 +430,7 @@ internal sealed partial class CapsuleWindow : Window
             Surface.Expansion = target ? 1 : 0; Surface.Redraw();
             if (target && pointerTracking && (!RetainsPointer() || readPointer() is Point p && !OwnsInteraction(p))) QueueDeparture();
             if (target && pointerTracking && readPointer() is Point at && IsHotspot(at) && !ContainsPointer(targetBounds, 1, at)) bridgeWatch.Start();
-            if (!target) { pointerTracking = false; pointerRetention = null; hotspot = null; CheckDockPointer(); await SaveOrigin(); }
+            if (!target) { pointerTracking = false; pointerRetention = null; hotspot = null; panelOffsetDip = null; RebuildEnvelope(); CheckDockPointer(); await SaveOrigin(); }
         }
         double distance = Math.Abs((target ? 1 : 0) - start);
         if (!animate || !IsVisible || !SystemParameters.ClientAreaAnimation || distance < .000001) { Done(); return; }
@@ -419,7 +455,7 @@ internal sealed partial class CapsuleWindow : Window
     }
     public async Task Invoke(string name)
     {
-        if (closed || !Surface.ActionEnabled(name)) return;
+        if (closed || pressed || !Surface.ActionEnabled(name)) return;
         if (name == "details") name = "main";
         if (name == "keepExpanded") { SetKeepsExpanded(!KeepsExpanded); await action(name, KeepsExpanded ? "true" : "false"); return; }
         if (name == "collapse") { Collapse(); return; }
@@ -427,6 +463,23 @@ internal sealed partial class CapsuleWindow : Window
         if (name == "filtersReset") { await action("filters-reset", null); return; }
         if (name is "contentUsage" or "contentBudget" or "contentMonitor") { await action("content", name == "contentUsage" ? "usage" : name == "contentBudget" ? "budget" : "monitor"); return; }
         if (name.StartsWith("monitorDetail:", StringComparison.Ordinal)) { await action("monitorDetail", name[14..]); return; }
+        if (name == "monitorCheck")
+        {
+            string home = Surface.State.S("home");
+            MonitorCheckPending = true; Surface.BeginMonitorCheck();
+            try { await action(name, null); }
+            catch (Exception e) { Surface.FailMonitorCheck(e.Message, home); }
+            finally { MonitorCheckPending = false; Surface.WindowStateChanged(); }
+            return;
+        }
+        if (name == "monitorClearEnded" || name.StartsWith("monitorStop:", StringComparison.Ordinal))
+        {
+            MonitorMutationPending = true; Surface.WindowStateChanged();
+            try { await action(name == "monitorClearEnded" ? name : "monitorStop", name == "monitorClearEnded" ? null : name[12..]); }
+            catch (Exception e) { Surface.ShowError(e.Message); }
+            finally { MonitorMutationPending = false; Surface.WindowStateChanged(); }
+            return;
+        }
         if (name is "context" or "more" or "period" or "model" or "task" or "content" or "budget" or "budgetPause") { await ShowMenu(name); return; }
         await action(name, null);
     }

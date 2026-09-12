@@ -35,6 +35,8 @@ internal static class CapsuleAccessibilityTests
         var state = DemoData.State(); var f = state.O("settings").O("floating");
         f["pinned"] = false; f["edgeAutoHide"] = false; f["keepExpanded"] = false;
         var checks = new JsonArray(); var commands = new List<(string Name, string? Value)>();
+        TaskCompletionSource? pendingMutation = null; Exception? mutationFailure = null;
+        TaskCompletionSource? pendingCheck = null; Exception? checkFailure = null; JsonObject? checkReply = null;
         CapsuleWindow? window = null;
         void Check(bool value, string id) { if (!value) throw new InvalidOperationException("Offscreen capsule: " + id); checks.Add(id); }
         CheckMenuFocusPolicy(Check);
@@ -44,7 +46,17 @@ internal static class CapsuleAccessibilityTests
             if (command == "content") f["content"] = value;
             if (command == "keepExpanded") f["keepExpanded"] = value == "true";
             if (command == "filters-reset") { f["model"] = "all"; f["task"] = "all"; }
-            window!.Update(state); return Task.CompletedTask;
+            window!.Update(state);
+            if (command == "monitorStop") return mutationFailure is not null ? Task.FromException(mutationFailure) : pendingMutation?.Task ?? Task.CompletedTask;
+            if (command == "monitorCheck") return FinishCheck();
+            return Task.CompletedTask;
+        }
+        async Task FinishCheck()
+        {
+            string home = state.S("home");
+            if (pendingCheck is not null) await pendingCheck.Task;
+            if (checkFailure is not null) throw checkFailure;
+            window!.Surface.CompleteMonitorCheck(checkReply ?? state.Copy(), home);
         }
         window = new CapsuleWindow(Action, () => Task.FromResult(state.Copy()), () => null) { ShowActivated = false, Topmost = false };
         try
@@ -121,6 +133,96 @@ internal static class CapsuleAccessibilityTests
             window.Update(state);
             Check(surface.Expansion == 0, "snapshot-does-not-reopen-an-actively-collapsed-window");
             f["keepExpanded"] = false; window.Update(state); Arrange();
+
+            state["monitor"] = TaskMonitorDemo.State().O("monitor").DeepClone();
+            f["content"] = "monitor"; window.Update(state); Arrange();
+            var cleanup = Child("monitorClearEnded");
+            Check(cleanup.GetAutomationControlType() == AutomationControlType.Button && cleanup.IsEnabled() && surface.KeyboardOrder().Contains("monitorClearEnded"),
+                "ended-cleanup-is-one-accessible-button");
+            var cleanupBounds = surface.Regions().Single(x => x.name == "monitorClearEnded").bounds;
+            await surface.ActivateActionAsync(surface.Hit(new(cleanupBounds.X + cleanupBounds.Width / 2, cleanupBounds.Y + cleanupBounds.Height / 2))!, false);
+            Check(commands.Last().Name == "monitorClearEnded", "pointer-cleanup-routes-list-command");
+            surface.FocusAction("monitorClearEnded", false); await surface.HandleKeyboardAsync(Key.Enter, ModifierKeys.None);
+            Check(commands.Last().Name == "monitorClearEnded", "keyboard-cleanup-shares-pointer-command");
+            int commandsBeforeUia = commands.Count;
+            ((IInvokeProvider)cleanup.GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(20);
+            Check(commands.Count == commandsBeforeUia + 1 && commands.Last().Name == "monitorClearEnded", "uia-cleanup-shares-pointer-command");
+            var visibleTasks = TaskMonitorVisual.Featured(state);
+            var activeTask = visibleTasks.First(x => x.B("active")); string stopID = "monitorStop:" + activeTask.S("id");
+            var stop = Child(stopID); var stopBounds = surface.Regions().Single(x => x.name == stopID).bounds;
+            Check(stop.GetName().Contains(activeTask.S("title"), StringComparison.Ordinal) && stop.GetName().Contains("Codex 继续执行", StringComparison.Ordinal),
+                "cancel-accessible-name-identifies-task-and-observer-only-effect");
+            await surface.ActivateActionAsync(surface.Hit(new(stopBounds.X + stopBounds.Width / 2, stopBounds.Y + stopBounds.Height / 2))!, false);
+            Check(commands.Last() == ("monitorStop", activeTask.S("id")), "pointer-cancel-keeps-task-identity");
+            surface.FocusAction(stopID, false); await surface.HandleKeyboardAsync(Key.Enter, ModifierKeys.None);
+            Check(commands.Last() == ("monitorStop", activeTask.S("id")), "keyboard-cancel-shares-pointer-command");
+            int beforeUiaStop = commands.Count; ((IInvokeProvider)stop.GetPattern(PatternInterface.Invoke)).Invoke(); await Task.Delay(20);
+            Check(commands.Count == beforeUiaStop + 1 && commands.Last() == ("monitorStop", activeTask.S("id")), "uia-cancel-shares-pointer-command");
+            string endedStopID = "monitorStop:" + visibleTasks.First(x => !x.B("active")).S("id");
+            Check(!Child(endedStopID).IsEnabled() && !surface.KeyboardOrder().Contains(endedStopID), "ended-result-cancel-is-disabled-instead-of-deleting-result");
+            pendingMutation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var cancellation = surface.ActivateActionAsync(stopID, false); int afterFirstStop = commands.Count;
+            await surface.ActivateActionAsync(stopID, false); await surface.ActivateActionAsync("monitorClearEnded", false);
+            Check(window.MonitorMutationPending && !stop.IsEnabled() && !cleanup.IsEnabled() && commands.Count == afterFirstStop,
+                "inflight-cancel-blocks-duplicate-and-cross-cleanup-submission");
+            pendingMutation.SetResult(); await cancellation; pendingMutation = null;
+            Check(!window.MonitorMutationPending && stop.IsEnabled() && cleanup.IsEnabled(), "completed-cancel-unlocks-other-monitor-actions");
+            mutationFailure = new InvalidOperationException("合成取消保存失败"); surface.CaptureTextBounds = true;
+            await surface.ActivateActionAsync(stopID, false);
+            Check(!window.MonitorMutationPending && stop.IsEnabled() && surface.VisibleTextBounds.Any(x => x.Text == mutationFailure.Message),
+                "cancel-failure-stays-in-floating-panel-and-remains-retryable");
+            mutationFailure = null; surface.CaptureTextBounds = false;
+            checkReply = state.Copy(); checkReply["monitorResult"] = J.Obj(("ok", true));
+            checkReply.O("monitor").O("sourceStatus")["status"] = "available";
+            pendingCheck = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            surface.CaptureTextBounds = true;
+            var checkPeer = Child("monitorCheck");
+            var checking = surface.ActivateActionAsync("monitorCheck", false); int checksSent = commands.Count;
+            await surface.ActivateActionAsync("monitorCheck", false);
+            Check(window.MonitorCheckPending && !checkPeer.IsEnabled() && commands.Count == checksSent &&
+                surface.VisibleTextBounds.Any(x => x.Text == "检查中…"), "manual-check-is-visible-and-rejects-duplicate-input");
+            pendingCheck.SetResult(); await checking; pendingCheck = null;
+            Check(!window.MonitorCheckPending && checkPeer.IsEnabled() && surface.MonitorCheckStatus.Contains("本地任务来源可用", StringComparison.Ordinal),
+                "manual-check-completion-shows-result-and-enables-recheck");
+            string completedCheck = surface.MonitorCheckStatus; window.Update(state);
+            Check(surface.MonitorCheckStatus == completedCheck && checkPeer.GetName().Contains(completedCheck, StringComparison.Ordinal),
+                "automatic-snapshot-keeps-manual-result-and-accessible-feedback");
+            foreach (string source in new[] { "partial", "unavailable" })
+            {
+                checkReply.O("monitor").O("sourceStatus")["status"] = source;
+                await surface.ActivateActionAsync("monitorCheck", false);
+                Check(surface.MonitorCheckLabel == "重试检查" && !surface.MonitorCheckStatus.Contains("来源可用", StringComparison.Ordinal),
+                    "completed-operation-does-not-claim-healthy-" + source);
+            }
+            checkReply.O("monitor").O("sourceStatus")["status"] = "available";
+            checkReply["monitorResult"] = J.Obj(("ok", false), ("error", "合成检查保存失败"));
+            await surface.ActivateActionAsync("monitorCheck", false);
+            Check(surface.MonitorCheckLabel == "重试检查" && checkPeer.GetName().Contains("合成检查保存失败", StringComparison.Ordinal),
+                "operation-error-takes-priority-over-available-source");
+            checkFailure = new System.IO.IOException("合成检查传输失败"); await surface.ActivateActionAsync("monitorCheck", false);
+            completedCheck = surface.MonitorCheckStatus; window.Update(state);
+            Check(!window.MonitorCheckPending && checkPeer.IsEnabled() && surface.MonitorCheckStatus == completedCheck &&
+                checkPeer.GetName().Contains(checkFailure.Message, StringComparison.Ordinal), "thrown-check-error-survives-polling-and-can-retry");
+            checkFailure = null;
+            checkReply["monitorResult"] = J.Obj(("ok", true)); await surface.ActivateActionAsync("monitorCheck", false);
+            state.O("monitor").O("sourceStatus")["status"] = "unavailable"; window.Update(state);
+            Check(!surface.MonitorCheckStatus.Contains("来源可用", StringComparison.Ordinal), "current-source-failure-overrides-an-earlier-success");
+            state.O("monitor").O("sourceStatus")["status"] = "available";
+            string originalHome = state.S("home"); pendingCheck = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            checking = surface.ActivateActionAsync("monitorCheck", false);
+            state["home"] = originalHome + "-another-source"; window.Update(state);
+            pendingCheck.SetResult(); await checking; pendingCheck = null;
+            Check(surface.MonitorCheckStatus == TaskMonitorVisual.SourceText(state), "late-check-result-cannot-label-a-different-data-directory");
+            state["home"] = originalHome; window.Update(state); surface.CaptureTextBounds = false;
+            state.O("monitor")["watches"] = new JsonArray(); window.Update(state); Arrange();
+            bool disabledCleanupRejected = false;
+            try { ((IInvokeProvider)cleanup.GetPattern(PatternInterface.Invoke)).Invoke(); }
+            catch (ElementNotEnabledException) { disabledCleanupRejected = true; }
+            int beforeDisabledCleanup = commands.Count; await surface.ActivateActionAsync("monitorClearEnded", false);
+            Check(disabledCleanupRejected && !cleanup.IsEnabled() && !surface.KeyboardOrder().Contains("monitorClearEnded") && commands.Count == beforeDisabledCleanup,
+                "disabled-cleanup-cannot-run-through-an-alternate-input");
+            f["content"] = "usage"; window.Update(state); Arrange();
 
             surface.CaptureTextBounds = true;
             foreach (bool light in new[] { false, true }) foreach (bool budget in new[] { false, true }) foreach (bool filters in new[] { false, true })

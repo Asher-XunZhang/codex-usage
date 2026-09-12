@@ -286,7 +286,10 @@ def smoke(app, workspace, controls_output=None, background=False):
     native_env = dict(env, CODEX_USAGE_DESKTOP_BASE=str(workspace / 'native-private-state'))
     if background:
         native_env['CODEX_USAGE_TEST_BACKGROUND'] = '1'
-    for flag in ('--check-runtime', '--self-test', '--monitor-tests', '--monitor-ui-tests', '--monitor-floating-tests', '--reliability-tests', '--layout-tests', '--worker-tests', '--hover-tests', '--dock-tests', '--morph-tests', '--tray-hover-tests', '--tray-interaction-tests', '--capsule-keyboard-tests'):
+    for flag in ('--check-runtime', '--self-test', '--monitor-tests', '--monitor-ui-tests', '--monitor-floating-tests', '--reliability-tests', '--layout-tests', '--worker-tests', '--hover-tests', '--dock-tests', '--morph-tests', '--tray-hover-tests', '--tray-interaction-tests', '--capsule-keyboard-tests', '--capsule-drag-tests', '--capsule-drop-tests', '--capsule-drop-render-tests', '--capsule-departure-tests'):
+        if background and flag in ('--capsule-drag-tests', '--capsule-drop-tests', '--capsule-departure-tests'):
+            native_reports[flag[2:]] = {'skipped': 'Requires a visible window or mouse capture; run without --background for full input acceptance.'}
+            continue
         report_path = workspace / (flag[2:] + '.json')
         result = subprocess.run([str(app / 'CodexUsage.exe'), flag, '--output', str(report_path)],
                                 cwd=workspace, env=native_env, stdout=subprocess.DEVNULL,

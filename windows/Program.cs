@@ -46,14 +46,14 @@ internal static class Program
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; Theme.Initialize();
         if (args.Contains("--monitor-tests"))
         {
-            try { TaskMonitorTests.Run(); TaskNotificationTests.Run(); if (output != null) J.Write(output, J.Obj(("success", true), ("checks", "task-monitor-core-and-notification-policy"))); return 0; }
+            try { TaskMonitorTests.Run(); TaskNotificationTests.Run(); var header = TaskMonitorHeaderTests.Run(); if (output != null) J.Write(output, J.Obj(("success", header.B("success")), ("checks", "task-monitor-core-and-notification-policy"), ("header", header))); return header.B("success") ? 0 : 1; }
             catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); return 1; }
         }
         if (args.Contains("--monitor-ui-tests"))
         {
             app.Startup += async (_, _) =>
             {
-                try { var result = await TaskMonitorUiTests.RunAsync(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success", true) ? 0 : 1); }
+                try { var result = await TaskMonitorUiTests.RunAsync(Arg("--frames")); result["messageRouting"] = await TaskMonitorMessageRoutingTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success", true) ? 0 : 1); }
                 catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
             };
             return app.Run();
@@ -124,6 +124,57 @@ internal static class Program
             app.Startup += async (_, _) =>
             {
                 try { var result = await CapsuleDockingTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--capsule-drop-render-tests"))
+        {
+            app.Startup += (_, _) =>
+            {
+                try { var result = CapsuleDropRenderTests.Run(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--capsule-drop-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await CapsuleDropIntentTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--capsule-departure-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await CapsuleLateDepartureTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--capsule-drag-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try
+                {
+                    var result = await CapsuleWholeWindowDragTests.RunAsync(Arg("--frames"));
+                    var geometry = CapsuleExpandedDragPlacementTests.Run(); result["geometry"] = geometry;
+                    result["success"] = result.B("success") && geometry.B("success");
+                    if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1);
+                }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--capsule-focus-return-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await CapsuleFocusReturnTests.RunAsync(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
                 catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
             };
             return app.Run();
@@ -235,7 +286,7 @@ internal static class Program
             };
             app.Exit += (_, _) => { timeout.Stop(); relay?.Dispose(); }; return app.Run();
         }
-        if (!owned) { try { Ipc.Send(J.Obj(("action", main ? "focus" : "main"), ("page", Arg("--page")), ("budgetID", Arg("--budget-id")), ("monitorID", Arg("--monitor-id")), ("messageID", Arg("--message-id"))), main ? Paths.Pipe + "-main" : Paths.Pipe).GetAwaiter().GetResult(); return 0; } catch (Exception) { return 1; } }
+        if (!owned) { try { Ipc.Send(J.Obj(("action", main ? "focus" : "main"), ("page", Arg("--page")), ("budgetID", Arg("--budget-id")), ("monitorID", Arg("--monitor-id")), ("messageID", Arg("--message-id")), ("monitorList", Arg("--monitor-list"))), main ? Paths.Pipe + "-main" : Paths.Pipe).GetAwaiter().GetResult(); return 0; } catch (Exception) { return 1; } }
         Host? host = null; Process? parentWatch = null; using var stop = new CancellationTokenSource();
         app.DispatcherUnhandledException += (_, e) => { try { Directory.CreateDirectory(Paths.Base); J.Write(Path.Combine(Paths.Base, "last-error.json"), J.Obj(("at", J.Now), ("error", e.Exception.ToString()))); } catch { } e.Handled = true; MessageBox.Show(e.Exception.Message, "Codex 用量", MessageBoxButton.OK, MessageBoxImage.Error); };
         app.Exit += (_, _) => { stop.Cancel(); host?.Dispose(); parentWatch?.Dispose(); };
@@ -250,7 +301,7 @@ internal static class Program
                     _ = parentWatch.WaitForExitAsync(stop.Token).ContinueWith(t => { if (!t.IsCanceled) app.Dispatcher.BeginInvoke(() => app.Shutdown()); }, TaskScheduler.Default);
                     JsonObject state = await Ipc.Send(J.Obj(("action", "state")));
                     Theme.Apply(Theme.Resolve(state.O("settings"), "main"));
-                    var window = new MainWindow(state, Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"));
+                    var window = new MainWindow(state, Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"), Arg("--monitor-list"));
                     if (Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") == "1") { window.ShowActivated = false; window.ShowInTaskbar = false; window.Opacity = 0; window.WindowStartupLocation = WindowStartupLocation.Manual; window.Left = window.Top = -12000; }
                     _ = Ipc.Listen(Paths.Pipe + "-main", request => app.Dispatcher.InvokeAsync(() => window.Handle(request)).Task.Unwrap(), stop.Token,
                         request => { if (request.S("action") == "close") app.Dispatcher.BeginInvoke(() => _ = window.CompleteClose()); },
@@ -260,7 +311,7 @@ internal static class Program
                 else
                 {
                     var settings = new Settings(); Theme.Apply(Theme.Resolve(settings.Data, "main")); host = new Host(demo, args.Contains("--no-quota"));
-                    if (!args.Contains("--tray") && !notificationLaunch) await host.OpenMain(Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"));
+                    if (!args.Contains("--tray") && !notificationLaunch) await host.OpenMain(Arg("--page"), Arg("--budget-id"), Arg("--monitor-id"), Arg("--message-id"), Arg("--monitor-list"));
                 }
             }
             catch (Exception e) { J.Write(Path.Combine(Paths.Base, "last-error.json"), J.Obj(("error", e.ToString()))); MessageBox.Show(e.Message, "Codex 用量启动失败"); app.Shutdown(1); }

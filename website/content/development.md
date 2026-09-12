@@ -1,165 +1,117 @@
 # 开发、构建与本地验证
 
-本页提供 [v1.0.1 发行源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1)的重现与当前源码开发两种检出方式。v1.0.1 包含额度弧线配色；v1.0.0 的历史源码与发行 ZIP 保持原样。普通使用者直接阅读 [安装指南](./installation.md)，无需安装开发环境。
+普通使用者直接[下载发行包](./installation.md)，无需开发环境。本页的模块入口适用于整理后的当前源码和 Windows v1.0.2；历史 macOS v1.0.1 tag 仍使用该版本原有目录与命令。
 
-## 环境与源码
+## 选择源码版本
 
-构建需要 macOS、Apple Command Line Tools 和 Python 3.10+。构建脚本只使用 Python 标准库。Swift/C 程序的最低编译目标为 macOS 11；该目标不代表所有旧系统和设备均已实测。
-
-如尚未安装 Command Line Tools，可执行：
-
-```sh
-xcode-select --install
-```
-
-重现 v1.0.1 时，获取并固定源码版本：
+在新的目录中克隆仓库：
 
 ```sh
 git clone https://github.com/Asher-XunZhang/codex-usage.git
 cd codex-usage
-git checkout --detach v1.0.1
 ```
 
-以上在新克隆中操作，不要求切换已有工作目录或丢弃本地修改。开发新功能或生成新配色预览时，应另从最新主线创建分支：
+- 重现 Windows 正式包：`git checkout --detach v1.0.2`。
+- 开发新改动：`git switch -c codex/my-change origin/main`。
+- 重现 macOS 旧正式包：`git checkout --detach v1.0.1`，使用[该 tag 的构建文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)。不要在旧 tag 中调用下文的新模块路径。
+
+v1.0.2 仅发布 Windows 包；从当前源码构建 macOS 属于开发构建，不等于已经有 macOS v1.0.2 正式包。
+
+## 当前目录与职责
+
+| 目录 | 内容 |
+| --- | --- |
+| `src/backend/` | 共享日志解析、增量索引、本地服务和父进程监测 |
+| `src/macos/` | Swift / AppKit 原生应用，按 App、Features、Infrastructure、UI 等职责组织 |
+| `src/windows/` | C# / WPF 项目；Features 下区分 Usage、Budgets、TaskMonitor、Floating、Tray |
+| `src/windows/Diagnostics/` | 调用真实 Windows 组件的内置测试与合成预览 |
+| `tools/common/`、`tools/macos/`、`tools/windows/` | 公共工具与各平台构建、打包、验证 |
+| `tests/common/`、`tests/macos/`、`tests/windows/`、`tests/tooling/` | 按适用范围组织的外部测试 |
+| `resources/macos/`、`resources/windows/` | 固定运行时清单、许可证与资源 |
+| `integrations/codex-token-usage/` | 可选 Token 技能与 Stop hook |
+| `docs/common/`、`docs/macos/`、`docs/windows/` | 工程说明、平台文档与验收记录 |
+| `website/` | 本文档站，独立构建，不参与桌面运行 |
+
+更详细的文件归属见[仓库目录介绍](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/PROJECT-STRUCTURE.md)与[贡献指南](https://github.com/Asher-XunZhang/codex-usage/blob/main/CONTRIBUTING.md)。
+
+仓库源码目录与发行运行时布局分开：Windows 包仍在 EXE 旁使用 `backend/`，macOS 使用 `Contents/Resources/backend/`。用户设置、预算与 Codex 日志目录不随仓库迁移。
+
+## Windows 构建与验证
+
+需要 Windows、用于构建脚本的 Python 3.10+，以及 .NET SDK **10.0.401**。在仓库根目录运行：
+
+```powershell
+python -B -m tools.windows.build --dotnet 'C:\Path\To\dotnet.exe'
+$env:CODEX_USAGE_WINDOWS_EXE = (Resolve-Path 'build/windows/x64/CodexUsage.exe').Path
+& 'build/windows/x64/python/python.exe' -E -s -B test.py
+python -B -m tools.windows.test_lifecycle --app build/windows/x64/CodexUsage.exe --output build/reports/windows/lifecycle.json
+python -B -m tools.windows.package
+python -B -m tools.windows.verify_release --report build/reports/windows/verification.json
+```
+
+`--dotnet` 可以省略，脚本会查找 `.local/dotnet/dotnet.exe` 和 PATH。首次构建需要联网获取固定依赖；运行时来源、大小与 SHA-256 位于 `resources/windows/runtimes/manifest.json`。产物位于 `build/windows/x64/`，ZIP 和整体 SHA-256 位于 `dist/windows/`。
+
+原生测试必须指向本次构建的 `CODEX_USAGE_WINDOWS_EXE`；没有指定时的跳过不是通过。离线发行验证还会检查包内清单、架构、随包 Python、合成数据库和解包后源码，不能只验证工作区里能运行。
+
+### 合成预览与不干扰检查
+
+```powershell
+& 'build/windows/x64/CodexUsage.exe' --demo
+& 'build/windows/x64/CodexUsage.exe' --preview --output "$PWD/build/previews/windows/main"
+python -B -m tools.windows.verify_release --app build/windows/x64 --background
+```
+
+`--demo` 使用隔离数据。后台验证会跳过可见 Popup 与真实键盘焦点等前台检查，并在报告说明；它不能替代完整交互验收。不要用真实任务、账号或聊天记录制作公开截图。
+
+完整参数、监控与窗口验证入口见[Windows 工程指南](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/windows/README.md#构建与验证)。
+
+## macOS 当前源码构建
+
+需要 macOS、Apple Command Line Tools 和 Python 3.10+。如尚未安装 Command Line Tools，可运行 `xcode-select --install`。
 
 ```sh
-git clone https://github.com/Asher-XunZhang/codex-usage.git codex-usage-dev
-cd codex-usage-dev
-git switch -c my-change origin/main
+python3 -B test.py
+python3 -m tools.macos.fetch_runtime --arch arm64
+python3 -m tools.macos.build --arch arm64
 ```
 
-若要精确复现本文的新配色，使用 `v1.0.1` 代替 `origin/main`。下方构建命令作用于所选检出；验证记录属于对应提交，不自动适用于未来改动。
+结果位于 `build/macos/arm64/Codex用量.app`。Intel 将架构改为 `x86_64`，产物位于 `build/macos/x86_64/`；构建也支持 `universal`。按架构顺序构建，避免并行写入共用缓存。运行时清单位于 `resources/macos/runtimes/manifest.json`。
 
-## 当前源码的目录与入口
-
-当前开发源码按 `src/backend/`、`src/macos/`、`src/windows/` 分组，工具位于 `tools/common/` 和对应平台目录。完整说明见[仓库目录介绍](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/PROJECT-STRUCTURE.md)。
-
-当前源码推荐在仓库根运行 `python3 -m tools.macos.fetch_runtime --arch arm64`、`python3 -m tools.macos.build --arch arm64`，输出为 `build/macos/arm64/Codex用量.app`；`python3 -m tools.macos.package` 输出到 `dist/macos/`。
-
-下方旧脚本命令适用于历史版本，也由当前源码的兼容入口保留，默认输出位置维持原样。历史 tag 中不存在新的模块入口；显式指定源码时，当前浮窗位于 `src/macos/Features/Floating/Capsule.swift`，旧 tag 位于 `Sources/Capsule.swift`。
-
-## 按芯片构建
-
-先在仓库根目录运行测试：
+完成需要的两种架构构建后，可运行：
 
 ```sh
-python3 test.py
+python3 -m tools.macos.package
+python3 -m tools.macos.verify_release
 ```
 
-Intel 构建：
-
-```sh
-python3 scripts/fetch_runtime.py --arch x86_64
-python3 build.py --arch x86_64
-```
-
-结果位于 `build/x86_64/Codex用量.app`。Apple Silicon 使用：
-
-```sh
-python3 scripts/fetch_runtime.py --arch arm64
-python3 build.py --arch arm64
-```
-
-结果位于 `build/arm64/Codex用量.app`。构建参数也支持 `universal` 双架构 App。按架构连续构建，避免并行写入共用的图标和模块缓存。
-
-运行组件固定为 Astral python-build-standalone 的 CPython 3.12.14 / 20260901 发布。`resources/runtimes/manifest.json`（当前源码为 `resources/macos/runtimes/manifest.json`）记录下载地址、大小和 SHA-256；下载先写临时文件，验证成功后保存。存在不匹配的缓存时会报错，不静默覆盖。
-
-发行 ZIP 内已带对应运行组件。若要复用已有完整 App 的资源，在发行 ZIP 的 `source/` 目录执行：
-
-```sh
-python3 build.py --arch x86_64 --runtime-source '../Codex用量.app/Contents/Resources'
-```
-
-Apple Silicon 将架构改为 `arm64`；资源来源也应匹配目标架构。
-
-## 验证离线运行组件
-
-自动化测试使用合成日志与独立临时目录，覆盖解析、索引、刷新、信号退出、原生界面和进程生命周期。Swift/AppKit 测试需要 macOS；其他平台会跳过相应测试，不意味着桌面 App 支持这些平台。
-
-以下例子检查 Intel 构建的宿主和主面板，使用独立临时支持目录，不打开 GUI、不读取个人聊天记录：
-
-```sh
-python3 - <<'PY'
-from pathlib import Path
-import os
-import subprocess
-import tempfile
-
-app = Path('build/x86_64/Codex用量.app').resolve()
-for executable in ['Contents/MacOS/CodexUsage',
-                   'Contents/Helpers/CodexUsageMain.app/Contents/MacOS/CodexUsage']:
-    with tempfile.TemporaryDirectory(prefix='codex-usage-bootstrap-') as temporary:
-        environment = dict(os.environ, CODEX_USAGE_DESKTOP_BASE=temporary)
-        subprocess.run([str(app / executable), '--check-runtime'], env=environment, check=True)
-PY
-```
-
-Apple Silicon 本机构建检查将路径中的 `x86_64` 改为 `arm64`。主面板嵌套组件使用父 App 资源，因此两个 bundle 需要分别检查。交叉编译或 Rosetta 上运行成功不能替代实体 Intel 验收。
-
-## 离屏界面预览
-
-```sh
-python3 scripts/render_previews.py
-python3 scripts/render_previews.py --output .local/previews
-```
-
-工具需要 Command Line Tools，会编译真实绘制组件，生成深浅主题、额度边界、长文本和展开中间帧的 26 张 PNG，以及收起样式合集。全部数字、时间、模型和任务均为合成示例；不读取本机 Codex 日志、账号或偏好，不打开已安装 App 或可见窗口。
-
-输出包括图片状态清单、源码与驱动摘要、编译和渲染日志。临时源码、二进制和模块缓存自动清理。默认 `.local/` 被 Git 忽略，同名预览会被替换；比较版本时请指定不同输出目录。离屏预览验证绘制布局，真实鼠标事件、窗口层级与系统菜单仍需交互验收。
+当前模块入口将发行包写入 `dist/macos/`。构建、签名完整性和 Rosetta 执行不能代替实体 Intel 与实际首次下载验收，也不会为应用增加 Developer ID 签名或 Apple 公证。
 
 ### 同步当前源码的浮窗示意图
 
-在 v1.0.1 或包含 PR #3 的更新源码检出中执行以下命令，生成并同步 README 和文档站共用的两张收起图片。50% 应为对应主题的琥珀色；在 v1.0.0 检出中生成的仍是绿色。
-
 ```sh
-python3 scripts/render_previews.py --output .local/previews
-cp .local/previews/compact-dark-50.png docs/macos/images/compact-dark-50.png
-cp .local/previews/compact-light-50.png docs/macos/images/compact-light-50.png
+python3 -m tools.macos.render_previews --output build/previews/macos
 ```
 
-上述同步路径适用于按平台整理后的当前源码；固定检出 `v1.0.1` 时，仍使用该版本原有的 `docs/images/` 目录。
+工具使用真实绘制组件和合成数据生成离屏预览。检查图片与状态清单后，再把需要的 PNG 复制到 `docs/macos/images/`，明确标注对应版本。v1.0.1 tag 中使用原来的 `scripts/render_previews.py` 与 `docs/images/`，不能混用新路径。
 
-发布前检查两张示意图和相对链接，并标明示意图对应版本与合成数据来源。仅补充说明或替换示意图时，沿用已有代码验证结果，无需启动已安装应用或重测无关功能。生成方式来自 [当前源码的本地验证工具说明](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md#离屏界面预览)。
+## 旧命令兼容与发行源码
 
-## 测量已运行 App 的内存
+当前根目录 `build.py`、`package.py` 与 `scripts/*.py` 保留兼容入口及原有默认输出；新增逻辑在 `tools/`。混用新旧命令时应显式对齐输出路径，不要把旧目录的产物当成本次构建。
 
-先手动将 App 切到要测量的状态，保持不操作，再采样：
+发行 ZIP 的 `source/` 带有重建桌面应用所需源码、工具、测试、资源与文档；它不是含网站工程和依赖的完整 Git 仓库镜像。做完整仓库开发请使用 Git 克隆。已发布同名 ZIP 不应重新打包覆盖。
 
-```sh
-python3 scripts/measure_processes.py --duration 40
-python3 scripts/measure_processes.py --app '/Applications/Codex用量.app' --duration 70 --output .local/performance
-```
+## 构建文档站
 
-默认目标为 `~/Applications/Codex用量.app`。工具不会启动、退出或操作应用，使用 Darwin `ri_phys_footprint`，单位 MiB；不是 RSS 或虚拟地址空间。
-
-- 合计包含当轮可读的 GUI、Python 和额度等相关进程；测量工具自身及系统共享服务不计入。
-- GUI 身份变化、原 GUI 退出、进程读取失败或首尾模式与刷新间隔变化，会使结果无效；检查 `valid` 字段。
-- 无辅助进程时的常驻中位数与合计峰值是不同口径；主面板一直打开时，闲置宿主中位数应为 `null`。
-- 离散采样可能漏掉短进程或瞬时峰值，不能用观察峰值保证完整生命周期峰值。
-- 该版本工具不报告 CPU。比较内存时应同时记录系统版本、实验负载、冷/热启动和交互顺序。
-
-每次生成独立命名的性能和样本 JSON，不包含聊天或凭据。完整指标和限制见固定版本 [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md)。
-
-## 打包与发行边界
-
-依次构建两种架构后执行：
+网站沿用 VitePress，依赖版本锁定在 `website/package.json` 和锁文件中。使用 Node.js 24 与项目指定的 pnpm 版本，在 `website/` 执行：
 
 ```sh
-python3 package.py
-python3 scripts/verify_release.py
+pnpm install --frozen-lockfile
+pnpm build
+pnpm check
 ```
 
-结果位于 `dist/`。ZIP 包含 App、文档、项目和第三方许可证、可构建源码及逐文件校验清单；外部同名 `.zip.sha256` 用于整个下载文件的校验。打包使用明确的文件清单，不包含日志、数据库、认证、偏好、编译缓存或本机实验数据。
+静态结果位于 `website/.vitepress/dist/`，使用 GitHub Pages 的 `/codex-usage/` 子路径。链接检查覆盖页面、图片、锚点与三份正式下载入口；远端发行资产是否已上传属于独立发布检查。
 
-该发布使用 ad hoc 签名，没有 Developer ID 签名或 Apple 公证。签名完整性、架构检查、运行组件启动和真实下载后的首次信任体验是不同验收项目；不能把构建通过当作任意 Mac 均可直接运行。已公开的验收结果见 [验证范围](./validation.md)。
+网站只复制文档目录中公开的图片，不从本机用户数据生成页面。构建网站不会构建、重启或操作桌面应用。
 
-## 固定来源
-
-发行 tag 内的安装脚本保留构建时快照，仍可能指向上一版；v1.0.1 的安装助手作为 Release 的独立 `install.sh` 与 `install.sh.sha256` 资产提供。先得到两份最终 ZIP 的摘要，再生成、校验和发布助手资产，最后独立提交更新主线脚本的固定版本与摘要，避免 ZIP 内脚本引用 ZIP 自身摘要。维护安装器时应从最新主线创建分支；不要用发行 tag 内的旧安装脚本安装新 ZIP。具体步骤见[主线构建与发布说明](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/BUILDING.md)；不要重新打包并覆盖已发布的同名 ZIP。
-
-- [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1)
-- [构建与发布文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)
-- [本地验证工具文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/DEVELOPMENT-TOOLS.md)
-- [版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/CHANGELOG.md)
-
-- [当前主线更新](https://github.com/Asher-XunZhang/codex-usage/blob/main/CHANGELOG.md)
+[平台支持与差异](./platforms.md) · [验证与兼容性](./validation.md) · [当前版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/CHANGELOG.md)

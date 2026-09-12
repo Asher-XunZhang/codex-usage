@@ -1,4 +1,5 @@
 import json
+import os
 from contextlib import closing
 from datetime import datetime, timedelta
 import sqlite3
@@ -45,7 +46,14 @@ class RefreshTests(unittest.TestCase):
 
     def write(self, amount):
         events = [meta('refresh-task'), *start('refresh-turn'), record('refresh-task', 'refresh-turn', 'response', value=u(amount, 20, 80, 10))]
-        (self.home / 'sessions/refresh.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in events))
+        path = self.home / 'sessions/refresh.jsonl'
+        previous = path.stat().st_mtime_ns if path.exists() else None
+        path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+        if previous is not None:
+            # Same-length writes can share one filesystem clock tick on Windows.
+            # These tests exercise refreshed snapshots, not clock resolution.
+            current = path.stat()
+            os.utime(path, ns=(current.st_atime_ns, max(current.st_mtime_ns, previous + 1_000_000_000)))
 
     def test_manual_refresh_reads_new_file_while_auto_is_off(self):
         self.launch(); self.wait(lambda: not self.index.loading)

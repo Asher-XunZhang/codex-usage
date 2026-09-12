@@ -1,0 +1,24 @@
+name: 问题反馈
+description: 报告能够复现的功能或界面问题
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: 平台与版本
+      description: 操作系统、应用版本或提交；界面问题请补充缩放和主题。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从什么状态开始，依次做了什么？
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 实际结果与预期结果
+      description: 可附截图或去除个人信息后的错误日志，请勿上传认证或聊天记录。
+    validations:
+      required: true

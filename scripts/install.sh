@@ -167,7 +167,7 @@ install_main() {
     [[ ! -e "$app" && -d "$target" ]] || fail '安装目标发生变化；请检查安装目录。'
     printf '\n安装完成：%s\n之后可直接双击打开，无需每次执行安装命令。\n' "$target"
     if [[ "$launch" == 1 ]]; then
-        open "$target" || fail "App 已安装，但系统未能启动。请查看 docs/INSTALL.md 或手动打开：$target"
+        open "$target" || fail "App 已安装，但系统未能启动。请查看 docs/macos/INSTALL.md 或手动打开：$target"
     fi
 }
 

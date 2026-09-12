@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Usage · 数据与状态"
+  short_description: "保障异步数据、编辑保存与失败恢复的一致性，维护用户信任和操作上下文"
+  default_prompt: "使用 $codex-usage-state-integrity 实现或检查当前数据与状态逻辑，覆盖相关的失败和恢复路径。"

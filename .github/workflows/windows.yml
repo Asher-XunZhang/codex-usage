@@ -10,7 +10,70 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      windows: ${{ steps.scope.outputs.windows }}
+      macos: ${{ steps.scope.outputs.macos }}
+      docs: ${{ steps.scope.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: scope
+        name: Select affected platforms from changed paths
+        env:
+          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          base = os.environ.get('BASE_REVISION', '')
+          full = os.environ['EVENT_NAME'] == 'workflow_dispatch' or not base or set(base) == {'0'}
+          selected = dict(windows=full, macos=full, docs=full)
+          if not full:
+              changed = subprocess.run(['git', 'diff', '--name-only', '-z', base, 'HEAD'], capture_output=True)
+              if changed.returncode:
+                  selected = dict(windows=True, macos=True, docs=True)
+              else:
+                  for name in changed.stdout.decode('utf-8', errors='replace').split('\0'):
+                      if not name:
+                          continue
+                      if name.startswith(('src/macos/', 'tools/macos/', 'resources/macos/')):
+                          selected['macos'] = True
+                      elif name.startswith(('src/windows/', 'tools/windows/', 'resources/windows/')):
+                          selected['windows'] = True
+                      elif name.startswith(('docs/', '.agents/')) or name in ('README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'AGENTS.md', 'LICENSE', 'THIRD-PARTY.md'):
+                          selected['docs'] = True
+                      elif name.startswith('website/') or name == '.github/workflows/docs.yml':
+                          pass  # The separate Documentation workflow owns the website.
+                      else:
+                          # Shared code, tests, compatibility entries and configuration
+                          # require both platforms; unknown paths fail toward coverage.
+                          selected['windows'] = selected['macos'] = True
+                      if name.startswith(('docs/', 'resources/', 'tools/common/')):
+                          selected['docs'] = True
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              for key, value in selected.items():
+                  output.write(f'{key}={str(value).lower()}\n')
+          PY
+
+  documentation:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check repository documentation links and resources
+        run: python -B -m tools.common.check_docs
+
   windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -24,38 +87,40 @@ jobs:
       - name: Shared backend regression tests
         run: python -B test.py
       - name: Build self-contained desktop with verified embedded Python
-        run: python -B scripts/build_windows.py --dotnet "${{ env.DOTNET_ROOT }}/dotnet.exe"
+        run: python -B -m tools.windows.build --dotnet "${{ env.DOTNET_ROOT }}/dotnet.exe"
       - name: Regression tests under the bundled isolated Python
         env:
-          CODEX_USAGE_WINDOWS_EXE: ${{ github.workspace }}/build/windows-x64/CodexUsage.exe
-        run: build/windows-x64/python/python.exe -E -s -B test.py
+          CODEX_USAGE_WINDOWS_EXE: ${{ github.workspace }}/build/windows/x64/CodexUsage.exe
+        run: build/windows/x64/python/python.exe -E -s -B test.py
       - name: Host and panel lifecycle with isolated synthetic data
-        run: python -B scripts/test_windows_lifecycle.py --app build/windows-x64/CodexUsage.exe --output build/windows-lifecycle.json
+        run: python -B -m tools.windows.test_lifecycle --app build/windows/x64/CodexUsage.exe --output build/reports/windows/lifecycle.json
       - name: Task monitor lifecycle and reminders with isolated synthetic data
-        run: python -B scripts/test_windows_monitor.py --app build/windows-x64/CodexUsage.exe --output build/windows-monitor.json
+        run: python -B -m tools.windows.test_monitor --app build/windows/x64/CodexUsage.exe --output build/reports/windows/monitor.json
       - name: Package offline portable application and source
-        run: python -B scripts/package_windows.py
+        run: python -B -m tools.windows.package
       - name: Verify distribution and offline synthetic-data smoke
-        run: python -B scripts/verify_windows.py --report build/windows-verification.json --controls-output build/windows-control-previews
+        run: python -B -m tools.windows.verify_release --report build/reports/windows/verification.json --controls-output build/previews/windows/controls
       - name: Save Popup previews and interaction report even when verification fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: codex-usage-windows-controls
-          path: build/windows-control-previews/
+          path: build/previews/windows/controls/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: codex-usage-windows-x64
           path: |
-            dist/*-windows-x64.zip
-            dist/*-windows-x64.zip.sha256
-            build/windows-verification.json
-            build/windows-lifecycle.json
-            build/windows-monitor.json
+            dist/windows/*-windows-x64.zip
+            dist/windows/*-windows-x64.zip.sha256
+            build/reports/windows/verification.json
+            build/reports/windows/lifecycle.json
+            build/reports/windows/monitor.json
           if-no-files-found: error
 
   shared-macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -65,3 +130,37 @@ jobs:
           python-version: '3.12'
       - name: macOS and shared backend regression tests
         run: python -B test.py
+      - name: Fetch both pinned macOS runtimes
+        run: python -B -m tools.macos.fetch_runtime --arch universal
+      - name: Build both architecture applications
+        run: |
+          python -B -m tools.macos.build --arch arm64
+          python -B -m tools.macos.build --arch x86_64
+      - name: Package both applications and complete source
+        run: python -B -m tools.macos.package --arch universal
+      - name: Verify both macOS releases
+        run: python -B -m tools.macos.verify_release --arch universal --report build/reports/macos/verification.json
+      - name: Run the actual unpacked source from an unrelated directory
+        run: |
+          python -B - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+          import zipfile
+          archive = next(Path('dist/macos').glob('*-AppleSilicon.zip'))
+          with tempfile.TemporaryDirectory(prefix='codex-release-source-') as temporary:
+              target = Path(temporary)
+              with zipfile.ZipFile(archive) as package:
+                  package.extractall(target / 'unpacked')
+              source = next((target / 'unpacked').glob('*/source'))
+              assert not (source / '.git').exists()
+              subprocess.run([sys.executable, '-B', str(source / 'test.py')], cwd=target, check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-usage-macos
+          path: |
+            dist/macos/*.zip
+            build/reports/macos/verification.json
+          if-no-files-found: error

@@ -17,8 +17,8 @@
 取得 [v1.0.1 源码](https://github.com/Asher-XunZhang/codex-usage/tree/v1.0.1) 后，在仓库根目录运行：
 
 ```sh
-python3 skill/scripts/token_usage.py --help
-python3 skill/scripts/token_usage.py --codex-home ~/.codex --format table
+python3 integrations/codex-token-usage/scripts/token_usage.py --help
+python3 integrations/codex-token-usage/scripts/token_usage.py --codex-home ~/.codex --format table
 ```
 
 脚本只使用 Python 标准库。请使用这台 Mac 实际可用的 Python 路径；这里的 `python3` 是示例，不是某位开发者的私有安装路径。
@@ -38,13 +38,13 @@ python3 skill/scripts/token_usage.py --codex-home ~/.codex --format table
 
 ## 单独安装技能
 
-`skill/` 是可独立复制的技能目录，包含 `SKILL.md`、`agents/openai.yaml` 和脚本。按自己所用 Codex 版本支持的技能安装方式添加，并选择本机可用的 Python 路径；具体使用说明以该目录内的 `SKILL.md` 为准。
+`integrations/codex-token-usage/` 是可独立复制的技能目录，包含 `SKILL.md`、`agents/openai.yaml` 和脚本。按自己所用 Codex 版本支持的技能安装方式添加，并选择本机可用的 Python 路径；具体使用说明以该目录内的 `SKILL.md` 为准。
 
 复制时应保留完整目录结构，不要只复制说明文件。安装本技能与安装桌面 App 是两个独立操作。
 
 ## Stop hook 的职责
 
-`skill/scripts/stop_hook.py` 可处理合法的 Stop 事件，只返回统计提示，不恢复模型控制流，也不回显事件携带的最终回复。
+`integrations/codex-token-usage/scripts/stop_hook.py` 可处理合法的 Stop 事件，只返回统计提示，不恢复模型控制流，也不回显事件携带的最终回复。
 
 hook 不会自行完成配置或建立信任；是否接入由使用者决定。复制脚本时，必须同时保留其旁边的 `token_usage.py`。桌面应用的安装、启动和退出都不构成启用该 hook 的授权。
 

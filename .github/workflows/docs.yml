@@ -3,9 +3,9 @@ name: Documentation
 on:
   push:
     branches: [main]
-    paths: ['website/**', 'docs/images/**', '.github/workflows/docs.yml']
+    paths: ['website/**', 'docs/macos/images/**', 'docs/common/images/**', '.github/workflows/docs.yml']
   pull_request:
-    paths: ['website/**', 'docs/images/**', '.github/workflows/docs.yml']
+    paths: ['website/**', 'docs/macos/images/**', 'docs/common/images/**', '.github/workflows/docs.yml']
   workflow_dispatch:
 
 permissions:

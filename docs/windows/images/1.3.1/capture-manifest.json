@@ -1,0 +1,161 @@
+{
+  "version": "1.3.1",
+  "date": "2026-09-12",
+  "data": "synthetic demonstration and regression fixtures; no real logs or account data",
+  "image_processing": "Original PNG bytes copied without cropping, recoloring or annotations. Display sizes are set only in Markdown HTML.",
+  "binary_sha256": {
+    "CodexUsage.exe": "adabd8b32705731d288351acea66382f04ec3cec3a1c22db7211926f7800f5f8",
+    "CodexUsage.dll": "6ca5e9837c5130364a1bf4993c9ebaa6e94b4029708f3ec2dfd61fd0d3da6b50"
+  },
+  "exports": [
+    "--preview --output <directory>",
+    "--layout-tests --frames <directory> --output <report>",
+    "--preview-controls --output <directory> (existing 1.3.1 acceptance export for dropdown only)"
+  ],
+  "assets": [
+    {
+      "file": "main-light-125.png",
+      "width": 1280,
+      "height": 848,
+      "bytes": 106605,
+      "sha256": "63022a0dd7cf363a8af5eb10d4e8b4ccf8549238305f9bf0a82bb8975b4c54be",
+      "source": "build/docs-captures-1.3.1/previews/layouts/main-min-light-125.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "main-narrow-dark-125.png",
+      "width": 930,
+      "height": 750,
+      "bytes": 76857,
+      "sha256": "f48a848c53e2a87451bfefb1c3657e3fd13c60ed4e3e10363ab041e4c43533f3",
+      "source": "build/docs-captures-1.3.1/previews/layouts/main-narrow-dark-125.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "budget-editor-light.png",
+      "width": 700,
+      "height": 520,
+      "bytes": 35954,
+      "sha256": "1679acdb092cb43d0f46575b04b0ef7728120064284e53df100a4529926a2788",
+      "source": "build/docs-captures-1.3.1/layouts/budgets/budget-token-700-light.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "budget-date-error-dark.png",
+      "width": 700,
+      "height": 520,
+      "bytes": 47027,
+      "sha256": "38b80a8499f67458ba2504a597d87008cb065e7d47643efffcf8fd81b2ceeba8",
+      "source": "build/docs-captures-1.3.1/layouts/budgets/budget-date-error-700-dark.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "settings-appearance-light.png",
+      "width": 594,
+      "height": 560,
+      "bytes": 15670,
+      "sha256": "0539b3e5f1c901bcf919e570933338625b7b2fafc3118b3cfcc8f66d371d5866",
+      "source": "build/docs-captures-1.3.1/layouts/settings-appearance-light.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "settings-updates-dark.png",
+      "width": 594,
+      "height": 560,
+      "bytes": 36274,
+      "sha256": "9ff1969ec38cddc0d086faf441d28daa97d9fd408afb0a6a811fd0309d61ba9f",
+      "source": "build/docs-captures-1.3.1/layouts/settings-updates-dark.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "floating-compact-light.png",
+      "width": 76,
+      "height": 76,
+      "bytes": 5930,
+      "sha256": "66934207b4c199753d59abd00d70f75c9e580dd695e57cd65bd67b0ce192c94f",
+      "source": "build/docs-captures-1.3.1/previews/compact-light-50.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "floating-usage-light.png",
+      "width": 336,
+      "height": 410,
+      "bytes": 26897,
+      "sha256": "bba2701473e0717e913596952abb61445a59a41f86514a3db0e7c2606a3c1050",
+      "source": "build/docs-captures-1.3.1/previews/expanded-light.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "floating-budget-dark.png",
+      "width": 336,
+      "height": 410,
+      "bytes": 28289,
+      "sha256": "60f46e2be05016470243817cbf8de707d84a1bfe164aec41fd1ed18dc52e09da",
+      "source": "build/docs-captures-1.3.1/previews/budget-capsule-dark.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "edge-left-light.png",
+      "width": 56,
+      "height": 144,
+      "bytes": 2983,
+      "sha256": "8347dc5cd6200b874d12dfc1b5b12a635a4625333f73b888cca73d1430d24cc1",
+      "source": "build/docs-captures-1.3.1/previews/edge-left-light-100.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "edge-right-dark.png",
+      "width": 56,
+      "height": 144,
+      "bytes": 3230,
+      "sha256": "9bbba44db2a22866dfa75969ad64f1f5fd00de9be756ced64b4d402f286cbd05",
+      "source": "build/docs-captures-1.3.1/previews/edge-right-dark-50.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "edge-top-light.png",
+      "width": 152,
+      "height": 56,
+      "bytes": 3375,
+      "sha256": "46de91293bebe8dd7d9b380ef7b89a4f18ac920e12724a690f0b7bcfd2314281",
+      "source": "build/docs-captures-1.3.1/previews/edge-top-light-50.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "edge-bottom-unknown-dark.png",
+      "width": 152,
+      "height": 56,
+      "bytes": 1906,
+      "sha256": "51f551d7a8428e54233e3bf9e5e0ab42dd1e860ac75102be52c7aa11bef39998",
+      "source": "build/docs-captures-1.3.1/previews/edge-bottom-dark-unknown.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "tray-hover-light.png",
+      "width": 348,
+      "height": 329,
+      "bytes": 18434,
+      "sha256": "efd69ec5ca2c4fedc5cfaff8959bb89f79a59aa1ed675604be696e3099a3225e",
+      "source": "build/docs-captures-1.3.1/previews/tray-hover-light.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "tray-detail-dark.png",
+      "width": 288,
+      "height": 457,
+      "bytes": 27887,
+      "sha256": "14f838efb3b1f2c3accb1d0fb7c30a9e2bca69988494e83d90bc44d3257067f8",
+      "source": "build/docs-captures-1.3.1/layouts/tray-detail-dark.png",
+      "capture": "1.3.1 native WPF component render exported for alignment documentation"
+    },
+    {
+      "file": "dropdown-light.png",
+      "width": 593,
+      "height": 205,
+      "bytes": 21396,
+      "sha256": "68cf280787f41bdb0bdf7c62c07426d3caf83f844dc529cc83cfe3ea1c6a1443",
+      "source": "build/windows-foreground-controls-1.3.1/dropdown-light.png",
+      "capture": "1.3.1 foreground control acceptance export"
+    }
+  ]
+}

@@ -121,3 +121,7 @@ python3 build.py --arch arm64
 本项目代码使用 [MIT](LICENSE) 许可证。随包 CPython 和第三方组件遵循各自的许可证，见 [运行组件来源](resources/THIRD-PARTY.md) 和 [完整 notices](resources/third-party-licenses/)。图标及示意图由本项目代码生成。
 
 本项目为独立工具，与 OpenAI 官方无隶属关系。
+
+## Windows
+
+提供用量概览、预算管理、托盘与浮窗显示，支持主题、筛选、CSV 导出和贴边收起。 Windows 使用、构建和验证请见 [Windows 说明](docs/WINDOWS.md)。macOS 已发布版本的安装链接保持不变。

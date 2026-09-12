@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -31,7 +32,8 @@ class RuntimeDownloadTests(unittest.TestCase):
         target, fetched = fetch_runtime(self.root, self.entry, lambda *a, **k: io.BytesIO(self.payload))
         self.assertTrue(fetched)
         self.assertEqual(target.read_bytes(), self.payload)
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+        if os.name != 'nt':
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
         with patch('scripts.fetch_runtime.urlopen', side_effect=AssertionError('must not download')):
             self.assertEqual(fetch_runtime(self.root, self.entry), (target, False))
         self.assertEqual([path.name for path in self.root.iterdir()], [self.entry['file']])
@@ -71,7 +73,12 @@ class RuntimeDownloadTests(unittest.TestCase):
     def test_cache_symlink_is_rejected(self):
         original = self.root / 'original'
         original.write_bytes(self.payload)
-        (self.root / self.entry['file']).symlink_to(original)
+        try:
+            (self.root / self.entry['file']).symlink_to(original)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink privilege or Developer Mode is unavailable')
+            raise
         with self.assertRaisesRegex(ValueError, 'regular file'):
             fetch_runtime(self.root, self.entry)
         self.assertEqual(original.read_bytes(), self.payload)
@@ -128,7 +135,8 @@ class ReleaseBoundaryTests(unittest.TestCase):
         output = self.root / 'extracted'
         result = inspect_archive(target, output, 'AppleSilicon')
         self.assertEqual(result, {'binary', 'SHA256SUMS.json'})
-        self.assertEqual(stat.S_IMODE((output / 'binary').stat().st_mode), 0o755)
+        if os.name != 'nt':
+            self.assertEqual(stat.S_IMODE((output / 'binary').stat().st_mode), 0o755)
 
     def test_archive_rejects_traversal_private_paths_and_symlinks(self):
         for name, mode in [('..\x2fescape', stat.S_IFREG | 0o644), ('auth.json', stat.S_IFREG | 0o644),
@@ -147,11 +155,13 @@ class ReleaseBoundaryTests(unittest.TestCase):
     def test_source_allowlist_keeps_skill_manifests_and_licenses_but_excludes_runtime_and_logs(self):
         required = ['README.md', 'LICENSE', 'THIRD-PARTY.md', 'CHANGELOG.md', 'build.py', 'test.py', 'package.py',
                     'resources/runtimes/manifest.json', 'resources/THIRD-PARTY.md',
+                    '.github/workflows/windows.yml', 'resources/runtimes/windows-manifest.json',
+                    'windows/CodexUsage.csproj', 'windows/App.cs', 'resources/licenses/SDK-LICENSE.txt',
                     'resources/third-party-licenses/LICENSE', 'skill/SKILL.md',
                     'skill/agents/openai.yaml', 'skill/scripts/token_usage.py', 'docs/images/demo.png',
                     'scripts/preview/main.swift', 'scripts/install.sh']
         excluded = ['resources/runtimes/runtime.tar.gz', 'tests/__pycache__/cache.pyc',
-                    'tests/private.log', 'backend/local.sqlite']
+                    'tests/private.log', 'backend/local.sqlite', 'windows/obj/Generated.cs', 'windows/bin/CodexUsage.dll']
         for name in required + excluded:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

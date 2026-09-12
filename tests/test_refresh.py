@@ -1,6 +1,13 @@
 import json
+import os
+from contextlib import closing
+from datetime import datetime, timedelta
 import sqlite3
 from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / 'backend'
+def macos_source(name):
+    return ROOT / 'Sources' / name
 import tempfile
 import threading
 import time
@@ -43,7 +50,14 @@ class RefreshTests(unittest.TestCase):
 
     def write(self, amount):
         events = [meta('refresh-task'), *start('refresh-turn'), record('refresh-task', 'refresh-turn', 'response', value=u(amount, 20, 80, 10))]
-        (self.home / 'sessions/refresh.jsonl').write_text(''.join(json.dumps(e)+'\n' for e in events))
+        path = self.home / 'sessions/refresh.jsonl'
+        previous = path.stat().st_mtime_ns if path.exists() else None
+        path.write_text(''.join(json.dumps(e)+'\n' for e in events))
+        if previous is not None:
+            # Same-length writes can share one filesystem clock tick on Windows.
+            # These tests exercise refreshed snapshots, not clock resolution.
+            current = path.stat()
+            os.utime(path, ns=(current.st_atime_ns, max(current.st_mtime_ns, previous + 1_000_000_000)))
 
     def test_manual_refresh_reads_new_file_while_auto_is_off(self):
         self.launch(); self.wait(lambda: not self.index.loading)
@@ -73,7 +87,12 @@ class RefreshTests(unittest.TestCase):
         self.write(100); self.index.scan()
         previous_rows = self.index.rows
         stamp = self.index.updated
-        with patch('dashboard_data.sqlite3.connect', side_effect=AssertionError('must not reread database')):
+        # OS wall clocks may return the same timestamp for consecutive quick scans.
+        # Advance the test clock deterministically to test publication, not precision.
+        later = datetime.fromisoformat(stamp) + timedelta(seconds=1)
+        with patch('dashboard_data.sqlite3.connect', side_effect=AssertionError('must not reread database')), \
+                patch('dashboard_data.datetime') as clock:
+            clock.now.return_value = later
             self.index.scan()
         self.assertIs(self.index.rows, previous_rows)
         self.assertNotEqual(self.index.updated, stamp)
@@ -101,9 +120,10 @@ class RefreshTests(unittest.TestCase):
 
     def test_very_long_database_title_has_bounded_python_allocation(self):
         self.write(100)
-        with sqlite3.connect(self.home/'state_5.sqlite') as database:
-            database.execute('CREATE TABLE threads(id TEXT, title TEXT, archived INTEGER)')
-            database.execute('INSERT INTO threads VALUES (?,?,0)', ('refresh-task', 'LongTitle ' * 200000))
+        with closing(sqlite3.connect(self.home/'state_5.sqlite')) as database:
+            with database:
+                database.execute('CREATE TABLE threads(id TEXT, title TEXT, archived INTEGER)')
+                database.execute('INSERT INTO threads VALUES (?,?,0)', ('refresh-task', 'LongTitle ' * 200000))
         tracemalloc.start()
         try:
             self.index.scan()

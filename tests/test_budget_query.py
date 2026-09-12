@@ -225,6 +225,25 @@ class BudgetQueryTests(unittest.TestCase):
         self.run_query(raw=' ' * 65537, expected=2)
         self.assertEqual(self.run_query([])['results'], [])
 
+    def test_nul_escapes_are_rejected_without_rejecting_literal_backslashes(self):
+        self.index.scan()
+        # JSON1 in older system SQLite truncates at a decoded NUL. Check all
+        # identifiers before that loss, including an escaped backslash prefix.
+        for field in ('id', 'periodID', 'model', 'task'):
+            for value in ('nul\x00value', '\\' + '\x00', '\\\\' + '\x00'):
+                with self.subTest(field=field, value=repr(value)):
+                    self.run_query([self.request(**{field: value})], expected=2)
+        for value in (r'literal\u0000', r'escaped\\u0000', r'quote"\u0000'):
+            with self.subTest(literal=value):
+                result = self.run_query([self.request(id=value, periodID=value)])
+                self.assertEqual(result['results'][0]['id'], value)
+                self.assertEqual(result['results'][0]['periodID'], value)
+        # A backslash may itself be expressed as a Unicode escape; it must not
+        # make the following literal characters into a second JSON escape.
+        raw = json.dumps({'requests': [self.request(id='placeholder')]})
+        raw = raw.replace('"placeholder"', r'"literal\u005cu0000"')
+        self.assertEqual(self.run_query(raw=raw)['results'][0]['id'], r'literal\u0000')
+
     def test_batch_is_one_snapshot_while_writer_commits_and_has_bounded_output(self):
         self.write()
         self.index.scan()

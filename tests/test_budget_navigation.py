@@ -105,10 +105,26 @@ for cycle in 0..<8 {
     draftPreserved = draftPreserved && budget.editing &&
         (budget.snapshotDraft()?["values"] as? [String: Any])?["name"] as? String == "保留未保存草稿"
 }
+// Exact restoration applies to a frame that fits the current screen. The CI
+// desktop can be smaller than the intentionally wide layout fixture above.
+let restorationVisibleFrame = (window.screen ?? NSScreen.main)!.visibleFrame
+let restorableSize = NSSize(width: min(manuallyResizedFrame.width, restorationVisibleFrame.width),
+                            height: min(manuallyResizedFrame.height, restorationVisibleFrame.height))
+let restorableX: CGFloat = restorationVisibleFrame.midX - restorableSize.width / 2
+let restorableY: CGFloat = restorationVisibleFrame.midY - restorableSize.height / 2
+let restorableFrame = NSRect(x: restorableX, y: restorableY, width: restorableSize.width, height: restorableSize.height)
+window.setFrame(restorableFrame, display: false)
+let savedFrame = window.frame
+precondition(restorationVisibleFrame.contains(savedFrame), "Exact restoration requires a visible saved frame")
 delegate.saveMainWindowFrame()
 window.setContentSize(NSSize(width: 1200, height: 800))
 delegate.restoreMainWindowFrame()
-let sharedFrameRestored = window.frame == manuallyResizedFrame
+let restoredFrame = window.frame
+let sharedFrameRestored = restoredFrame == savedFrame
+// A frame saved on a larger display must be clamped, not restored offscreen.
+usagePreferences.set(NSStringFromRect(restorationVisibleFrame.insetBy(dx: -40, dy: -40)), forKey: "mainWindowFrame")
+delegate.restoreMainWindowFrame()
+let oversizedFrameClamped = window.frame == restorationVisibleFrame
 window.setContentSize(NSSize(width: 1040, height: 718))
 let kind = descendants(budget).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "kind" }!
 kind.select(kind.itemArray.first { $0.representedObject as? String == "money" }!)
@@ -157,6 +173,8 @@ let outside = controls.compactMap { control -> [String: Any]? in
 let report: [String: Any] = ["beforeLayout": rect(beforeLayout), "states": states,
                            "budgetAction": budgetAction, "usageAction": usageAction,
                            "draftPreserved": draftPreserved, "manualFrame": rect(manuallyResizedFrame), "sharedFrameRestored": sharedFrameRestored,
+                           "restorationVisibleFrame": rect(restorationVisibleFrame), "savedFrame": rect(savedFrame), "restoredFrame": rect(restoredFrame),
+                           "oversizedFrameClamped": oversizedFrameClamped,
                            "filtersPreserved": delegate.days == "7" && delegate.model == "all" && delegate.task == "all",
                            "navigationPaintPreserved": navigationPaintPreserved,
                            "minimumWidth": Double(root.bounds.width), "controlsOutsideMinimumWidth": outside,
@@ -228,6 +246,7 @@ class BudgetNavigationTests(unittest.TestCase):
             self.assertTrue(report["navigationPaintPreserved"], evidence)
             self.assertLessEqual(report["minimumWidth"], 1041, evidence)
             self.assertTrue(report["sharedFrameRestored"], evidence)
+            self.assertTrue(report["oversizedFrameClamped"], evidence)
             self.assertEqual(report["controlsOutsideMinimumWidth"], [], evidence)
             self.assertTrue(report["choicesLoaded"], evidence)
             self.assertCountEqual(report["selectedChoices"], ["long-model", "long-task"], evidence)

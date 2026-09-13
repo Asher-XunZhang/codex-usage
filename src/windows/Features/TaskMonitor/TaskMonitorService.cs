@@ -120,6 +120,15 @@ internal sealed class TaskMonitorService : IDisposable
                 log.BackfillDone = row.B("backfillDone", ID(task.S("turnID")) && task.S("status") != "unknown");
                 log.BackfillPosition = log.BackfillCheckpoint = Math.Clamp((long)(row.N("backfillPosition") ?? offset), 0, offset);
                 foreach (var turn in row.A("turns").Rows().TakeLast(64)) if (ID(turn.S("turnID"))) log.Turns[turn.S("turnID")] = turn.Copy();
+                // Older versions could retain a start in Turns but reject it as older
+                // than millisecond metadata. Revalidate the consumed log, rather than
+                // treating that inconsistent checkpoint as finished discovery.
+                if (!ID(log.Task.S("turnID")) && log.Turns.Count > 0)
+                {
+                    log.BackfillDone = false;
+                    log.BackfillPosition = log.BackfillCheckpoint = offset;
+                    dirty = true;
+                }
                 logs[logPath] = log;
             }
             sawComplete = saved.B("sawComplete"); sawInterrupted = saved.B("sawInterrupted");
@@ -495,8 +504,10 @@ internal sealed class TaskMonitorService : IDisposable
             log.BackfillDone = true;
             log.ReverseLine.SetLength(0); log.ReversePrefix.Clear(); log.BackfillOversize = false;
             if (log.Turns.Count > 64) foreach (string key in log.Turns.OrderBy(x => x.Value.N("updatedAt") ?? 0).Take(log.Turns.Count - 64).Select(x => x.Key).ToArray()) log.Turns.Remove(key);
-            // An old turn's terminal event arriving after a newer start does not replace current execution.
-            if (log.Task.S("turnID") == turn || at >= (log.Task.N("updatedAt") ?? 0))
+            // Metadata is not an execution boundary: its milliseconds can be later
+            // than the first start's whole-second timestamp. Once a turn is known,
+            // an older turn's terminal event still cannot replace newer execution.
+            if (!ID(log.Task.S("turnID")) || log.Task.S("turnID") == turn || at >= (log.Task.N("updatedAt") ?? 0))
             {
                 foreach (var item in result) log.Task[item.Key] = item.Value?.DeepClone();
                 log.ParseError = log.Error = "";

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the packaged monitoring host through IPC and synthetic lifecycle logs."""
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -31,13 +32,14 @@ def run(application):
                 raise AssertionError(label)
             checks.append(label)
 
-        def append(task, kind, turn):
-            now = time.time()
+        def append(task, kind, turn, *, at=None):
+            now = time.time() if at is None else at
             payload = {'id': task, 'cwd': 'D:/Synthetic Monitor Project'} if kind == 'session_meta' else {
-                'type': kind, 'turn_id': turn, 'started_at' if kind == 'task_started' else 'completed_at': now,
+                'type': kind, 'turn_id': turn, 'started_at' if kind == 'task_started' else 'completed_at': int(now),
                 'reason': 'interrupted'}
             with (home / 'sessions' / f'rollout-{task}.jsonl').open('a', encoding='utf-8') as stream:
-                stream.write(json.dumps({'timestamp': now, 'type': kind if kind == 'session_meta' else 'event_msg', 'payload': payload}) + '\n')
+                stamp = datetime.fromtimestamp(now, timezone.utc).isoformat(timespec='milliseconds')
+                stream.write(json.dumps({'timestamp': stamp, 'type': kind if kind == 'session_meta' else 'event_msg', 'payload': payload}) + '\n')
 
         def send(payload):
             nonlocal sequence
@@ -74,11 +76,15 @@ def run(application):
 
         try:
             for task in ('monitor-a', 'monitor-b'):
-                append(task, 'session_meta', '')
-                append(task, 'task_started', 'turn-1')
+                # The first start is already on disk before the observer launches.
+                # Codex metadata has milliseconds; lifecycle payloads have whole seconds.
+                started = int(time.time()) + .949
+                append(task, 'session_meta', '', at=started)
+                append(task, 'task_started', 'turn-1', at=started)
             launch()
             snapshot = operation('check')
             check(len(snapshot['monitor']['tasks']) == 2, 'zero-token tasks discovered by packaged host')
+            check(all(task['selectable'] for task in snapshot['monitor']['tasks']), 'already-running first turns with mixed timestamp precision can be selected')
             until(lambda: not state()['busy'], 'initial usage snapshot settles before filter comparison')
             original_filter = state()['settings']['floating']
             for task, mode in (('monitor-a', 'once'), ('monitor-b', 'each')):

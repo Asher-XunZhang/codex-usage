@@ -48,6 +48,89 @@ internal static class TaskMonitorTests
         throw new InvalidOperationException("Backfill did not terminate within bounded fixture work");
     }
 
+    private static void FirstTurnTimestampPrecisionTests(string root)
+    {
+        long at = new DateTimeOffset(2026, 9, 13, 9, 32, 52, TimeSpan.Zero).ToUnixTimeSeconds();
+        string CreatePrecisionLog(string home, string id, string turn, string fraction)
+        {
+            string directory = Path.Combine(home, "sessions"); Directory.CreateDirectory(directory);
+            string file = Path.Combine(directory, "rollout-" + id + ".jsonl");
+            string timestamp = "2026-09-13T09:32:52." + fraction + "Z";
+            Append(file, J.Obj(("type", "session_meta"), ("timestamp", timestamp),
+                ("payload", J.Obj(("id", id), ("cwd", "D:\\Example Project")))));
+            Append(file, J.Obj(("type", "event_msg"), ("timestamp", timestamp),
+                ("payload", J.Obj(("type", "task_started"), ("turn_id", turn), ("started_at", at)))));
+            return file;
+        }
+
+        foreach (bool historical in new[] { false, true })
+        {
+            string suffix = historical ? "backfill" : "forward", id = "precision-" + suffix, turn = id + "-turn";
+            string home = Path.Combine(root, id + "-home"), store = Path.Combine(root, id + ".json");
+            string file = CreatePrecisionLog(home, id, turn, historical ? "949" : "390");
+            if (historical) Fill(file, 5);
+            using (var service = new TaskMonitorService(store, home))
+            {
+                service.Poll(home, true);
+                if (historical)
+                {
+                    Check(service.Snapshot().O("diagnostics").I("backfillPending") > 0,
+                        "precision fixture requires recovery of the first start beyond the initial tail");
+                    Settle(service, home);
+                }
+                var task = service.Snapshot().A("tasks").Rows().Single();
+                Check(task.B("selectable") && task.S("status") == "running" && task.S("turnID") == turn && task.N("startedAt") == at,
+                    suffix + " first start remains selectable when its whole-second time precedes metadata milliseconds");
+                Check(service.Snapshot().A("messages").Count == 0 && Add(service, home, id, turn).B("ok") && Watch(service, id).B("active"),
+                    suffix + " previously running first turn can actually be monitored without inventing a past result");
+                Append(file, Event("task_complete", turn, at + 1)); service.Poll(home, true);
+                Check(!Watch(service, id).B("active") && Watch(service, id).S("status") == "completed" &&
+                    service.Snapshot().A("messages").Rows().Single().S("turnID") == turn,
+                    suffix + " precision-safe first turn records its real end once");
+                Append(file, Event("task_complete", turn, at + 1)); service.Poll(home, true);
+                Check(service.Snapshot().A("messages").Count == 1,
+                    suffix + " duplicate completion does not duplicate the recovered first-turn result");
+            }
+            using (var restored = new TaskMonitorService(store, home))
+            {
+                restored.Poll(home, true);
+                Check(restored.Snapshot().A("messages").Count == 1 && !Watch(restored, id).B("active"),
+                    suffix + " completed first-turn result remains deduplicated after restart");
+            }
+        }
+
+        string legacyHome = Path.Combine(root, "precision-legacy-home"), legacyStore = Path.Combine(root, "precision-legacy.json");
+        string legacyFile = CreatePrecisionLog(legacyHome, "precision-legacy", "precision-legacy-turn", "949");
+        using (var seed = new TaskMonitorService(legacyStore, legacyHome)) seed.Poll(legacyHome, true);
+        var saved = J.Read(legacyStore, 32 * 1024 * 1024); var cursor = saved.A("cursors").Rows().Single();
+        Check(cursor.A("turns").Rows().Any(x => x.S("turnID") == "precision-legacy-turn" && x.S("status") == "running"),
+            "legacy fixture retains the already parsed explicit running turn");
+        cursor.O("task")["turnID"] = ""; cursor.O("task")["status"] = "unknown"; cursor.O("task")["updatedAt"] = at + .949;
+        cursor["offset"] = new FileInfo(legacyFile).Length; cursor["backfillDone"] = true;
+        J.Write(legacyStore, saved);
+        using (var restored = new TaskMonitorService(legacyStore, legacyHome))
+        {
+            Settle(restored, legacyHome); var task = restored.Snapshot().A("tasks").Rows().Single();
+            Check(task.B("selectable") && task.S("status") == "running" && task.S("turnID") == "precision-legacy-turn" &&
+                restored.Snapshot().A("messages").Count == 0,
+                "restart repairs an exhausted legacy cursor whose parsed first turn was hidden by metadata precision");
+            Check(Add(restored, legacyHome, "precision-legacy", "precision-legacy-turn").B("ok"),
+                "repaired legacy running task accepts a real subscription without another start event");
+        }
+
+        string absentHome = Path.Combine(root, "precision-absent-home"), absentStore = Path.Combine(root, "precision-absent.json");
+        string absentFile = CreatePrecisionLog(absentHome, "precision-absent", "unwritten-turn", "390");
+        File.WriteAllText(absentFile, File.ReadLines(absentFile).First() + "\n", new UTF8Encoding(false));
+        using (var service = new TaskMonitorService(absentStore, absentHome)) Settle(service, absentHome);
+        using (var restored = new TaskMonitorService(absentStore, absentHome))
+        {
+            Settle(restored, absentHome); var task = restored.Snapshot().A("tasks").Rows().Single();
+            Check(!task.B("selectable") && task.S("status") == "unknown" && task.S("turnID").Length == 0 &&
+                !Add(restored, absentHome, "precision-absent", "unwritten-turn").B("ok") && restored.Snapshot().A("messages").Count == 0,
+                "metadata alone remains unselectable after restart and cannot invent a running turn");
+        }
+    }
+
     private static void BackfillTests(string root)
     {
         string home = Path.Combine(root, "long-home"), store = Path.Combine(root, "long-state.json");
@@ -265,6 +348,7 @@ internal static class TaskMonitorTests
         string root = Path.Combine(Path.GetTempPath(), "CodexUsageMonitorTests-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
         try
         {
+            FirstTurnTimestampPrecisionTests(root);
             string home = Path.Combine(root, "home"), storePath = Path.Combine(root, "monitor.json"); double now = J.Now + .01;
             string first = CreateLog(home, "task-a", "turn-a", now);
             string second = CreateLog(home, "task-b", "turn-b", now);

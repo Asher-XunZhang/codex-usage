@@ -46,7 +46,11 @@ precondition((restoredBook["drafts"] as! [String: Object]).count == 2)
 window.contentView = page; page.layoutSubtreeIfNeeded()
 let save = button("保存并启用")
 let frame = save.convert(save.bounds, to: page)
-precondition(page.bounds.contains(frame) && frame.width > 0)
+precondition(page.bounds.contains(frame) && frame.width > 0, "Save frame \(frame), page \(page.bounds), native insets \(save.alignmentRectInsets)")
+for title in ["保留草稿并返回", "另存为新预算", "取消"] {
+    let control = button(title), rect = button(title).convert(button(title).bounds, to: page)
+    precondition(page.bounds.contains(rect) && rect.width > 0, "Footer \(title): \(rect) outside \(page.bounds), insets \(control.alignmentRectInsets)")
+}
 var ancestor = save.superview
 while let view = ancestor { precondition(!(view is NSScrollView), "Save must remain outside the scrolling form"); ancestor = view.superview }
 click("保存并启用")

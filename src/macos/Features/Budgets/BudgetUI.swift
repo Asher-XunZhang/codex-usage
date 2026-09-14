@@ -672,6 +672,14 @@ final class BudgetPage: NSView {
             draft["rule"] = rule; draft["expectedRevision"] = 0; self.editing = false; self.restoreDraft(draft)
         }; controls["saveAs"] = copy
         let buttons = budgetStack([keep, copy, NSView(), cancel, save], horizontal: true)
+        // AppKit lays out rounded buttons by their alignment rect, whose native
+        // bezel can extend beyond the stack on older macOS versions. Reserve
+        // those actual insets so the page's clipping never trims footer buttons.
+        let footerInsets = [keep, copy, cancel, save].map { $0.alignmentRectInsets }
+        buttons.edgeInsets = NSEdgeInsets(top: max(0, footerInsets.map { $0.top }.max() ?? 0),
+                                         left: max(0, footerInsets.map { $0.left }.max() ?? 0),
+                                         bottom: max(0, footerInsets.map { $0.bottom }.max() ?? 0),
+                                         right: max(0, footerInsets.map { $0.right }.max() ?? 0))
         for child in form.arrangedSubviews { child.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true }
         let submission = budgetStack(spacing: 6)
         if expectedRevision > 0 {

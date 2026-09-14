@@ -1,6 +1,6 @@
 ---
 title: 用量、提醒与桌面陪伴
-description: 下载适合你的 Codex 用量桌面版，了解 Windows 用量、预算提醒与任务监控，以及 macOS 菜单栏和圆形浮窗。
+description: 下载 Windows 或 macOS v1.0.2，查看用量、预算提醒、任务监控及四边贴合浮窗。
 outline: false
 ---
 
@@ -60,7 +60,7 @@ outline: false
 
 两端可设置 Token 预算、按自填价格估算金额，或在官方余量降至下限时提醒。预算只提醒，不限制 Codex 执行。
 
-[设置预算提醒 →](./windows-guide.md#budgets)
+[Windows 预算 →](./windows-guide.md#budgets) · [macOS 预算 →](./user-guide.md#budgets)
 
 </div>
 <div>
@@ -69,7 +69,7 @@ outline: false
 
 两端可选择本轮或每轮提醒。关闭主面板后继续监控，在圆环、贴边侧签和托盘保留静态状态标识。
 
-[了解任务监控 →](./windows-guide.md#monitoring)
+[Windows 监控 →](./windows-guide.md#monitoring) · [macOS 监控 →](./user-guide.md#monitoring)
 
 </div>
 </div>

@@ -60,7 +60,7 @@ export default defineConfig({
       { text: '平台差异', link: '/platforms' },
       { text: '发行版本', items: [
         { text: 'Windows · v1.0.2', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2' },
-        { text: 'macOS · v1.0.1', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1' }
+        { text: 'macOS · v1.0.2', link: 'https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2' }
       ] }
     ],
     socialLinks: [{ icon: 'github', link: 'https://github.com/Asher-XunZhang/codex-usage' }],

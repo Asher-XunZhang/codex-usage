@@ -70,6 +70,7 @@ def usage(request, used, generated=NOW, *, complete=True, rows=None, has_rows=Tr
 
 @unittest.skipUnless(shutil.which('xcrun'), 'Requires Foundation Swift toolchain')
 class BudgetCoreTests(unittest.TestCase):
+    damaged_backup_pattern = '*.damaged-*'
     @classmethod
     def setUpClass(cls):
         cls.build = tempfile.TemporaryDirectory(prefix='budget core build ')
@@ -107,10 +108,10 @@ class BudgetCoreTests(unittest.TestCase):
         responses = self.run_commands(apply(), apply('recover', {'confirm': False}))
         self.assertTrue(all('error' in item for item in responses))
         self.assertEqual(self.path.read_bytes(), damaged)
-        self.assertEqual(list(self.path.parent.glob('*.damaged-*')), [])
+        self.assertEqual(list(self.path.parent.glob(self.damaged_backup_pattern)), [])
         response = self.run_commands(apply('recover', {'confirm': True}))[0]
         self.assertNotIn('error', response)
-        backups = list(self.path.parent.glob('*.damaged-*'))
+        backups = list(self.path.parent.glob(self.damaged_backup_pattern))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), damaged)
         self.assertEqual(json.loads(self.path.read_text())['rules'], [])
@@ -218,11 +219,16 @@ class BudgetCoreTests(unittest.TestCase):
         self.assertEqual(result['summaries'][0]['status'], 'partial')
         self.assertAlmostEqual(result['summaries'][0]['used'], 12.6)
         self.assertIsNone(result['summaries'][0]['remaining'])
-        diagnostic = result['summaries'][0]['priceDiagnostics'][0]
+        self.assert_unknown_model_diagnostic(result['summaries'][0])
+
+    def assert_unknown_model_diagnostic(self, summary):
+        # Each native implementation exposes the same missing-price meaning
+        # through its own diagnostic schema. Windows overrides only this shape.
+        diagnostic = summary['priceDiagnostics'][0]
         self.assertEqual(diagnostic['model'], 'unknown')
         self.assertEqual(set(diagnostic['missingPrices']), {'input', 'cachedInput', 'output'})
         self.assertFalse(diagnostic['cacheClassificationUnknown'])
-        self.assertTrue(result['summaries'][0]['knownAmountIsLowerBound'])
+        self.assertTrue(summary['knownAmountIsLowerBound'])
 
     def test_missing_cache_split_cannot_be_treated_as_full_price_input(self):
         prices = [dict(model='m', input=2, cachedInput=0.5, output=10)]

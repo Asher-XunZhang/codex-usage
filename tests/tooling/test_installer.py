@@ -39,11 +39,11 @@ printf '%s\\n' "$architecture" "$label" "$expected_sha" "$release_url"
     def test_selects_pinned_release_for_intel_native_arm_and_rosetta(self):
         for hardware, reported, architecture, label, digest in [
             ('0', 'x86_64', 'x86_64', 'Intel',
-             '72dba2fb47328e601928d7a9f53a89ea91ddce60ca2dce686eca7bd2bb14e1e8'),
+             '5ccbe975ff3524037bb9a3177225fcdb4c8f82028210b9ac770d599a6ff0709f'),
             ('1', 'arm64', 'arm64', 'AppleSilicon',
-             'f2dbe256370a57bebea4c9573192305b7fbe84aaa629cd79d9df86c3c2c9e2e3'),
+             '30579a3dd8dd876aac5946f51dd95adbb42340ce2d4e773439216d4bd96b481d'),
             ('1', 'x86_64', 'arm64', 'AppleSilicon',
-             'f2dbe256370a57bebea4c9573192305b7fbe84aaa629cd79d9df86c3c2c9e2e3'),
+             '30579a3dd8dd876aac5946f51dd95adbb42340ce2d4e773439216d4bd96b481d'),
         ]:
             with self.subTest(hardware=hardware, reported=reported):
                 result = self.selection(hardware, reported)
@@ -51,7 +51,7 @@ printf '%s\\n' "$architecture" "$label" "$expected_sha" "$release_url"
                 self.assertEqual(result.stdout.splitlines(), [
                     architecture, label, digest,
                     'https://github.com/Asher-XunZhang/codex-usage/releases/'
-                    f'download/v1.0.1/codex-usage-desktop-v1.0.1-{label}.zip',
+                    f'download/v1.0.2/codex-usage-desktop-v1.0.2-{label}.zip',
                 ])
 
     def test_intel_without_optional_arm64_key_uses_uname(self):
@@ -82,7 +82,7 @@ class InstallerTransactionTests(unittest.TestCase):
         self.target = self.destination / APP_NAME
         self.trace = self.directory / 'trace.txt'
         self.archive = self.directory / 'release with spaces.zip'
-        source = self.directory / 'source' / 'Codex用量-1.0.1-Intel'
+        source = self.directory / 'source' / 'Codex用量-1.0.2-Intel'
         self.fixture_app = source / APP_NAME
         self.payload = self.fixture_app / 'Contents' / 'payload.txt'
         self.payload.parent.mkdir(parents=True)

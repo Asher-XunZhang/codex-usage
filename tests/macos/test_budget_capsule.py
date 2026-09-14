@@ -33,7 +33,7 @@ final class Fixture {
         state.budgetStatus = "剩余 10% · 视觉提醒已提示"; state.budgetStale = false
         state.budgetOptions = [("daily", "日常开发"), ("project", "项目金额")]
         surface = CapsuleSurface(state: state); host = CapsuleHost(surface: surface)
-        window = NSPanel(contentRect: NSRect(x: 600, y: 400, width: 76, height: 76), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window = NSPanel(contentRect: NSRect(origin: NSPoint(x: 600, y: 400), size: CapsuleSurface.small), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.isMovableByWindowBackground = false; window.contentView = host
         surface.action = { [weak self] action in
             guard let self = self else { return }
@@ -83,7 +83,7 @@ case "mode":
     }
     f.state.budgetMode = true; f.state.budgetFraction = nil; f.state.budgetStale = true
     check(f.state.normalizedQuota == nil && f.surface.liquidFraction == nil && f.state.displayStale, "Unknown budget must not fall back to official quota")
-    check(f.surface.bounds.size == NSSize(width: 76, height: 76), "Collapsed budget size stays 76×76")
+    check(f.surface.bounds.size == NSSize(width: 76, height: 76), "Budget and usage retain the quota ring")
 case "selectors":
     let f = Fixture(); defer { f.cleanup() }; f.expand()
     f.surface.menuTrackingOverride = { menu, _ in
@@ -110,7 +110,7 @@ case "readonly":
     let f = Fixture(); defer { f.cleanup() }; f.state.budgetMode = true; f.expand()
     f.click(NSPoint(x: 150, y: 154))
     check(f.actions.isEmpty && !f.state.interactionActive, "Read-only budget scope must not dispatch a mouse action")
-    let children = f.surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }
+    let children = f.surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }
     let readonly = children.first { $0.accessibilityLabel() == "预算范围，只读" }!
     check(readonly.isAccessibilityEnabled() == false, "Scope is announced disabled")
     _ = readonly.accessibilityPerformPress()

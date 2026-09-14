@@ -2,7 +2,7 @@
 
 [文档导航](../README.md) · [任务监控](TASK-MONITOR.md) · [预算管理](BUDGETS.md) · [验证范围](VALIDATION.md) · [界面设计](LAYOUT-PROPOSAL.md)
 
-Windows v1.0.2 提供用量统计、预算提醒和任务监控，支持主面板、系统托盘与可拖动浮窗。Windows 使用 WPF 原生界面，与 macOS 共用统计后端；本次只发布 Windows 包，macOS 下载继续使用 [v1.0.1](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1)。两端能力差异见[对齐清单](../common/WINDOWS-MACOS-ALIGNMENT.md)。
+Windows v1.0.2 提供用量统计、预算提醒和任务监控，支持主面板、系统托盘与可拖动浮窗。Windows 使用 WPF 原生界面，与 macOS 共用统计后端；同名 [v1.0.2 Release](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2) 于 2026-09-15 补充 macOS 两种芯片的包，Windows 既有资产和标签保持不变。两端能力差异见[对齐清单](../common/WINDOWS-MACOS-ALIGNMENT.md)。
 
 ## 界面示例
 

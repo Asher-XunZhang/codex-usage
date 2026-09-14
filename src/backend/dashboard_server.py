@@ -12,6 +12,7 @@ import sys
 import subprocess
 import time
 import socket
+import selectors
 from socketserver import TCPServer
 import signal
 from contextlib import nullcontext, contextmanager
@@ -243,6 +244,25 @@ class LocalHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = os.name != 'nt'
     daemon_threads = True
 
+    def serve_until_stopped(self, stop):
+        if sys.platform == 'darwin':
+            # ParentMonitor owns the stop pipe until this loop has returned.
+            # Signal handlers set the same event; a restarted select is still
+            # woken by the readable pipe (PEP 475), without an idle timeout.
+            with selectors.DefaultSelector() as selector:
+                selector.register(self, selectors.EVENT_READ)
+                selector.register(stop, selectors.EVENT_READ)
+                while not stop.is_set():
+                    ready = selector.select()
+                    if stop.is_set():
+                        break
+                    if any(key.fileobj is self for key, _ in ready):
+                        self._handle_request_noblock()
+        else:
+            self.timeout = 0.25
+            while not stop.is_set():
+                self.handle_request()
+
     def get_request(self):
         connection, address = super().get_request()
         connection.settimeout(10)
@@ -268,9 +288,15 @@ def main():
     parser.add_argument("--parent-pid", type=int, help="Exit when this direct parent exits (desktop app)")
     parser.add_argument("--refresh-seconds", type=int, default=30, help="Seconds between scans; 0 disables automatic scans")
     parser.add_argument("--cache-path", type=Path, help="Private persistent SQLite index for the native desktop app")
+    parser.add_argument("--desktop-events", action="store_true", help="macOS only: bounded lifecycle/state JSON on stdout")
     args = parser.parse_args()
     if args.parent_pid is not None and (args.parent_pid <= 1 or args.supervise or (os.name == 'nt' and os.getppid() != args.parent_pid)):
         parser.error("--parent-pid requires a live direct parent and cannot be combined with --supervise")
+    if args.desktop_events and (sys.platform != 'darwin' or args.supervise or args.log_file):
+        parser.error("--desktop-events requires macOS direct launch without --log-file")
+    event_output = sys.stdout
+    if args.desktop_events:
+        sys.stdout = sys.stderr
     if args.log_file:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = args.log_file.open("a", encoding="utf-8", buffering=1)
@@ -305,19 +331,25 @@ def main():
         if os.name != 'nt' or len(shutdown_token) != 64 or any(c not in '0123456789abcdef' for c in shutdown_token):
             shutdown_token = None
         server = LocalHTTPServer(("127.0.0.1", args.port), make_handler(index, args.instance_id, shutdown_token))
-        threading.Thread(target=index.run, daemon=True).start()
         state = {"pid": os.getpid(), "url": f"http://127.0.0.1:{server.server_port}", "scope": "local-only"}
         if args.state_file:
             args.state_file.parent.mkdir(parents=True, exist_ok=True)
             args.state_file.write_text(json.dumps(state), encoding="utf-8")
         print(json.dumps(state), flush=True)
-        server.timeout = 0.25
+        events = None
+        if args.desktop_events:
+            from desktop_events import DesktopEvents
+            events = DesktopEvents(event_output.fileno(), args.instance_id)
+            events.publish(state, ready=True)
+            index.on_update = events.publish
+        threading.Thread(target=index.run, daemon=True).start()
         try:
             with shutdown_signals(index.stop):
-                while not index.stop.is_set():
-                    server.handle_request()
+                server.serve_until_stopped(index.stop)
         finally:
             index.stop.set()
+            if events is not None:
+                events.close()
             server.server_close()
             if args.state_file:
                 try:

@@ -17,6 +17,7 @@ import unittest
 FIXTURE = r'''
 import Foundation
 typealias Object = [String: Any]
+final class VisibleFixture { var isVisible = true }
 final class WindowFixture {
     var mainIsRunning = true
     var sent: [Object] = []
@@ -27,14 +28,15 @@ final class PageFixture {
     var navigations: [Object] = []
     func update(_ state: Object) { updates.append(state) }
     func navigate(budgetID: String?, create: Bool) { navigations.append(["id": budgetID as Any? ?? NSNull(), "create": create]) }
-    func acknowledgeSave(id: String, revision: Int?, error: String?) {}
+    func acknowledgePin(id: String, requestID: String, error: String?) {}
+    func acknowledgeSave(id: String, revision: Int?, error: String?, requestID: String? = nil) {}
 }
 final class PreferenceFixture {
     var values: Object = [:]
     func set(_ value: Any?, forKey key: String) { values[key] = value }
 }
-final class CapsuleFixture { var budgetID = "original"; var budgetMode = false }
-final class StoreFixture { var rules: [Object] = [] }
+final class CapsuleFixture { var budgetID = "original"; var budgetMode = false; var monitorMode = false }
+final class StoreFixture { var rules: [Object] = [["id": "pinned-budget"]] }
 final class CoordinatorFixture {
     let store = StoreFixture()
     func apply(_ action: String, payload: Object) throws {}
@@ -62,6 +64,7 @@ final class AppDelegate {
     var mainPage = "usage"
     var openedDashboard = 0
     var openedMain = 0
+    var floating: VisibleFixture? = VisibleFixture()
     var shownFloating = 0
     var renderedBudget = 0
     var outgoing: [Object] = []
@@ -242,7 +245,7 @@ class BudgetBridgeTests(unittest.TestCase):
         self.assertEqual(output['floatingID'], 'pinned-budget')
         self.assertTrue(output['floatingMode'])
         self.assertEqual(output['floatingShows'], 1)
-        self.assertEqual(output['preferences'], dict(floatingBudgetID='pinned-budget', floatingBudgetMode=True))
+        self.assertEqual(output['preferences'], dict(floatingBudgetID='pinned-budget', floatingBudgetMode=True, floatingMonitorMode=False))
         self.assertEqual(output['hostOpenedMain'], 0)
         self.assertEqual(output['navigations'], [])
         self.assertEqual(output['mainPage'], 'usage')

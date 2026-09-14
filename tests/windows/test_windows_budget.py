@@ -5,8 +5,9 @@ Build first, then run with an explicit binary to avoid testing an old local buil
     python -m unittest discover -s tests -p test_windows_budget.py -v
 
 No Swift compiler or third-party test package is required. The assertions and
-fixtures are inherited unchanged from test_budget_core.py; only the JSON runner
-is replaced. Production --self-test also runs independent C# budget checks.
+fixtures are inherited from test_budget_core.py; the JSON runner, backup naming
+and diagnostic schema use each platform's native contract. Production --self-test
+also runs independent C# budget checks.
 """
 import json
 import os
@@ -25,6 +26,15 @@ EXE = os.environ.get('CODEX_USAGE_WINDOWS_EXE', '')
 class WindowsBudgetParityTests(mac_budget_tests.BudgetCoreTests):
     __unittest_skip__ = False
     __unittest_skip_why__ = ''
+    damaged_backup_pattern = '*.unreadable-*.bak'
+
+    def assert_unknown_model_diagnostic(self, summary):
+        issues = [item for item in summary['issues'] if item['type'] == 'price']
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]['model'], 'unknown')
+        self.assertEqual(issues[0]['category'], 'model')
+        self.assertTrue(issues[0]['message'])
+        self.assertEqual(summary['coverage'], 'partial')
 
     @classmethod
     def setUpClass(cls):

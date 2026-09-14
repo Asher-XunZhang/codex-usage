@@ -25,7 +25,7 @@ window.contentView = page
 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
 func field(_ id: String) -> NSTextField { descendants(page).compactMap { $0 as? NSTextField }.first { $0.identifier?.rawValue == id }! }
 func popup(_ id: String) -> NSPopUpButton { descendants(page).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == id }! }
-func button(_ title: String) -> NSButton { descendants(page).compactMap { $0 as? NSButton }.first { $0.title == title }! }
+func button(_ title: String) -> NSButton { guard let result = descendants(page).compactMap({ $0 as? NSButton }).first(where: { $0.title == title }) else { fatalError("Missing button: " + title) }; return result }
 func choose(_ id: String, _ value: String) {
     let control = popup(id)
     control.select(control.itemArray.first { $0.representedObject as? String == value }!)
@@ -44,6 +44,13 @@ precondition(page.selectedBudgetID == "daily" && !page.editing)
 precondition(descendants(page).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "10.00M" }, "Compact Token value must scale by one million")
 click("在浮窗显示")
 precondition(actions.last!.0 == "pin" && actions.last!.1["id"] as? String == "daily")
+let firstPin = actions.last!.1["requestID"] as! String
+page.acknowledgePin(id: "daily", requestID: firstPin, error: "模拟显示失败")
+let beforeRetry = actions.filter { $0.0 == "save" }.count
+click("仅重试显示浮窗")
+precondition(actions.last!.0 == "pin" && actions.filter { $0.0 == "save" }.count == beforeRetry, "Retrying display must never save the rule again")
+page.acknowledgePin(id: "daily", requestID: actions.last!.1["requestID"] as! String, error: nil)
+
 click("暂停 30 分钟")
 precondition(actions.last!.0 == "pause" && actions.last!.1["durationSeconds"] as? Int == 1800)
 click("本周期不再弹出")
@@ -91,6 +98,8 @@ precondition(page.editing && field("name").stringValue == "我的未保存草稿
 click("保存并启用")
 var committed = saved; committed["revision"] = 2
 page.update(["rules": [committed], "summaries": [summary], "error": "索引暂时不可用"])
+precondition(page.editing, "A newer revision alone is not a receipt for this edit")
+page.acknowledgeSave(id: "daily", revision: 2, error: nil)
 precondition(!page.editing && page.snapshotDraft() == nil)
 
 // A known lower bound above the budget must not be rendered as an exact overage.
@@ -121,6 +130,7 @@ precondition(prices[0]["output"] as? Double == 0)
 page.acknowledgeSave(id: money["id"] as! String, revision: 1, error: nil)
 
 // Official consumption cannot be selected/saved; floor is account-wide with explicit window.
+page.update(["rules": [rule], "summaries": [summary], "quota": ["updated_at": Date().timeIntervalSince1970, "windows": [["duration_minutes": 300], ["duration_minutes": 10080]]]])
 page.navigate(budgetID: nil, create: true)
 field("name").stringValue = "官方周余"
 choose("kind", "quota")
@@ -133,7 +143,7 @@ precondition(official["amount"] as? Double == 15 && official["quotaCondition"] a
 precondition(official["model"] as? String == "all" && official["windowMinutes"] as? Double == 10080)
 page.acknowledgeSave(id: official["id"] as! String, revision: 1, error: nil)
 
-// Native custom date range rejects an empty period; deferred navigation does not drop a draft.
+// Native custom date range rejects an empty period; navigation retains independent drafts.
 page.navigate(budgetID: nil, create: true)
 field("name").stringValue = "自定义时间"
 choose("period", "once")
@@ -144,11 +154,18 @@ end.dateValue = start.dateValue
 let beforeDates = actions.filter { $0.0 == "save" }.count
 click("保存并启用")
 precondition(actions.filter { $0.0 == "save" }.count == beforeDates)
+let customID = (page.snapshotDraft()!["rule"] as! Object)["id"] as! String
 page.navigate(budgetID: "daily")
+precondition(!page.editing && page.selectedBudgetID == "daily")
+let book = page.snapshotDraftBook()!
+precondition((book["drafts"] as! [String: Object])[customID] != nil)
+page.navigate(budgetID: customID)
 precondition(page.editing && field("name").stringValue == "自定义时间")
 click("取消")
+page.navigate(budgetID: "daily")
 precondition(!page.editing && page.selectedBudgetID == "daily")
-click("删除预算…")
+let more = descendants(page).compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "预算更多操作" }!
+more.selectItem(withTitle: "删除预算…"); _ = more.sendAction(more.action, to: more.target)
 precondition(!actions.contains { $0.0 == "delete" }, "Delete needs deliberate second confirmation")
 click("确认删除此预算")
 precondition(actions.contains { $0.0 == "delete" && $0.1["id"] as? String == "daily" })

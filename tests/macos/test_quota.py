@@ -36,6 +36,9 @@ try JSONSerialization.data(withJSONObject:data).write(to:directory.appendingPath
 let reader=QuotaReader(root:directory)
 reader.start()
 precondition(reader.snapshot.resetCount==3 && reader.snapshot.error==nil, "A fresh cached quota must not launch an unavailable helper during mode changes")
+reader.setEnabled(false)
+reader.refresh(force:true)
+precondition(!reader.enabled && !reader.isRefreshing && reader.snapshot.resetCount==3, "Disabled refresh preserves cached data and never starts a helper")
 var stopped=false;reader.stop{stopped=true}
 while !stopped { RunLoop.main.run(until:Date().addingTimeInterval(0.01)) }
 print("Quota read-only display checks passed")

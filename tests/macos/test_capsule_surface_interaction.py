@@ -109,26 +109,59 @@ case "click-and-buttons":
     let button = f.screen(NSPoint(x: 59, y: CapsuleSurface.large.height - 25)), origin = f.window.frame.origin
     f.surface.mouseDown(with: f.event(.leftMouseDown, at: button))
     f.surface.mouseDragged(with: f.event(.leftMouseDragged, at: NSPoint(x: button.x + 20, y: button.y)))
+    check(f.window.frame.origin.x == origin.x + 20, "A control drag moves the complete expanded window")
     f.surface.mouseDragged(with: f.event(.leftMouseDragged, at: button))
     f.surface.mouseUp(with: f.event(.leftMouseUp, at: button))
-    check(f.window.frame.origin == origin && f.actions.isEmpty, "Dragging a control neither moves the window nor clicks on return")
+    check(f.window.frame.origin == origin && f.actions.isEmpty, "A control drag returning to its origin never clicks")
     f.state.enabled = false
     f.click(NSPoint(x: 29, y: 65))
     check(f.actions.isEmpty && !f.state.pointerPressed, "Disabled refresh has no active gesture")
     f.state.enabled = true; f.click(NSPoint(x: 29, y: 65))
     check(f.actions == ["refresh"], "Ordinary refresh remains independently clickable")
+case "whole-panel":
+    let f = Fixture(); defer { f.dispose() }; f.expand()
+    for local in [NSPoint(x: 29, y: 65), NSPoint(x: 100, y: 190), NSPoint(x: 150, y: 280), NSPoint(x: 290, y: 385), NSPoint(x: 100, y: 65)] {
+        let origin = f.window.frame.origin, start = f.screen(local)
+        f.state.enabled = false
+        f.surface.mouseDown(with: f.event(.leftMouseDown, at: start))
+        f.surface.mouseUp(with: f.event(.leftMouseUp, at: NSPoint(x: start.x + 17, y: start.y - 9)))
+        check(f.window.frame.origin == NSPoint(x: origin.x + 17, y: origin.y - 9) && f.actions.isEmpty, "Every data, button and disabled region honors a coalesced final drag without activation")
+    }
+    let field = f.surface.subviews.compactMap { $0 as? CapsuleCopyField }.first!
+    let start = f.screen(NSPoint(x: 100, y: 65)), origin = f.window.frame.origin
+    field.mouseDown(with: f.event(.leftMouseDown, at: start))
+    field.mouseDragged(with: f.event(.leftMouseDragged, at: NSPoint(x: start.x + 20, y: start.y)))
+    field.mouseUp(with: f.event(.leftMouseUp, at: NSPoint(x: start.x + 20, y: start.y)))
+    check(f.window.frame.origin.x == origin.x + 20 && f.actions.isEmpty, "Actual native summary field relays single-drag to its parent")
+case "opening-collapse":
+    let f = Fixture(); defer { f.dispose() }; f.expand(); f.surface.expansion = 0.93
+    let point = f.screen(NSPoint(x: 298, y: 385))
+    f.clickScreen(point)
+    check(f.actions == ["collapse"], "The visible collapse button interrupts an incomplete opening animation")
+case "upward-collapse":
+    let f = Fixture(); defer { f.dispose() }
+    let initial = f.screen(NSPoint(x: 38, y: 38)), old = f.window.frame
+    f.surface.mouseEntered(with: f.event(.mouseMoved, at: initial))
+    f.window.setFrame(NSRect(x: old.maxX - 336, y: old.minY, width: 336, height: 410), display: false)
+    f.window.contentView?.layoutSubtreeIfNeeded(); f.surface.expansion = 1
+    let collapse = f.screen(NSPoint(x: 298, y: 385))
+    f.clickScreen(collapse)
+    check(f.actions == ["collapse"], "A visible collapse button wins over an overlapping retained ring hotspot without a mouse-move event")
+    f.actions = []
+    f.surface.mouseMoved(with: f.event(.mouseMoved, at: collapse)); f.clickScreen(collapse)
+    check(f.actions == ["collapse"], "Real motion releases the old ring hotspot even when it overlaps the upward-expanded collapse button")
 case "shape-hotspot":
     for clamp in [false, true] {
         let f = Fixture(origin: NSPoint(x: clamp ? 10 : 600, y: 400)); defer { f.dispose() }
         check(f.surface.containsScreenPoint(f.screen(NSPoint(x: 38, y: 38))), "Circle center is inside")
         check(!f.surface.containsScreenPoint(f.screen(NSPoint(x: 2, y: 2))), "Transparent rectangular circle corners are not hover/click targets")
         f.click(NSPoint(x: 2, y: 2)); check(f.actions.isEmpty, "A transparent corner must not dispatch main")
-        let local = clamp ? NSPoint(x: 20, y: 60) : NSPoint(x: 38, y: 60)
+        let local = clamp ? NSPoint(x: 20, y: 30) : NSPoint(x: 68, y: 30)
         let originalScreenPoint = f.screen(local)
         f.surface.mouseEntered(with: f.event(.mouseMoved, at: originalScreenPoint))
         f.expand(clampLeft: clamp)
         f.clickScreen(originalScreenPoint)
-        check(f.actions == ["main"], "Hover resizing and screen clamping must preserve the original circular primary hotspot")
+        check(f.actions == ["main"], "Hover resizing and screen clamping must preserve the original compact pill hotspot")
         check(!f.surface.containsScreenPoint(f.screen(NSPoint(x: 1, y: 1))), "Expanded rounded corners are also outside the Surface")
         f.actions = []
         f.surface.mouseMoved(with: f.event(.mouseMoved, at: f.screen(NSPoint(x: 150, y: 180))))
@@ -178,6 +211,26 @@ case "async-choices":
     f.click(NSPoint(x: 100, y: 121)); f.window.contentView = nil
     pending[3]([("after-detach", "After detach")], nil)
     check(!f.state.interactionActive && f.menuCount == 1, "Detaching the view cancels pending choices")
+case "small-keyboard":
+    let f = Fixture(); defer { f.dispose() }; f.expand()
+    f.window.setContentSize(NSSize(width: 240, height: 220)); f.window.contentView?.layoutSubtreeIfNeeded()
+    check(f.surface.subviews.compactMap { $0 as? NSScroller }.count == 2, "A constrained work area exposes native scrollbars")
+    func key(_ code: UInt16, shift: Bool = false) {
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: shift ? [.shift] : [], timestamp: 0,
+            windowNumber: f.window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
+        f.surface.keyDown(with: event)
+    }
+    check(f.window.makeFirstResponder(f.surface), "The surface accepts explicit keyboard focus")
+    for _ in 0..<10 { key(48) }
+    f.surface.menuTrackingOverride = { menu, _ in f.choose("10", in: menu) }
+    key(36)
+    check(f.actions == ["interval:10"], "Tab scrolls an offscreen action into view and Enter uses its native menu")
+    f.actions = []; f.click(NSPoint(x: 200, y: 195))
+    check(f.actions == ["collapse"], "The fixed footer stays clickable after scrolling")
+    f.actions = []; key(53)
+    check(f.actions == ["collapse"], "Escape uses the same explicit collapse action")
+    f.window.setContentSize(CapsuleSurface.large); f.window.contentView?.layoutSubtreeIfNeeded()
+    check(f.surface.subviews.allSatisfy { $0 is CapsuleCopyField }, "Returning to normal dimensions removes scrolling controls")
 default: fatalError("Unknown test")
 }
 print(CommandLine.arguments[1] + " passed")
@@ -200,6 +253,9 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_header_click_dedup_buttons_and_disabled_refresh(self):
         self.run_case('click-and-buttons')
+        self.run_case('whole-panel')
+        self.run_case('upward-collapse')
+        self.run_case('opening-collapse')
 
     def test_shape_and_original_hotspot_during_resize_and_clamp(self):
         self.run_case('shape-hotspot')
@@ -209,6 +265,9 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_cancelled_and_replaced_async_choice_callbacks(self):
         self.run_case('async-choices')
+
+    def test_small_window_scrolling_fixed_footer_and_keyboard(self):
+        self.run_case("small-keyboard")
 
 
 if __name__ == '__main__':

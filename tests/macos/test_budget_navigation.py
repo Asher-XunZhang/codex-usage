@@ -18,8 +18,10 @@ import uuid
 
 
 SOURCES = [
-    "Main.swift", "Chart.swift", "Capsule.swift", "CapsuleHost.swift",
-    "StatusMenu.swift", "Quota.swift", "Runtime.swift", "WindowProcess.swift",
+    "Main.swift", "MainState.swift", "Settings.swift", "UpdateStatus.swift", "Chart.swift", "Capsule.swift", "CapsuleHost.swift",
+    "CapsulePlacement.swift", "CapsuleDocking.swift", "TaskMonitorCore.swift", "TaskLogReader.swift", "TaskMonitorService.swift",
+    "TaskMonitorUI.swift", "TaskMonitorHost.swift", "NotificationRouter.swift",
+    "StatusDetail.swift", "StatusMenu.swift", "Quota.swift", "BackendEvents.swift", "Runtime.swift", "WindowProcess.swift",
     "UsageChangeMonitor.swift", "Termination.swift", "BudgetCore.swift",
     "ControlFeedback.swift", "BudgetUI.swift", "BudgetHost.swift",
 ]
@@ -69,6 +71,7 @@ func snapshot(_ name: String) -> [String: Any] {
             "pickerHit": hit === picker || hit?.isDescendant(of: picker) == true,
             "hitClass": hit.map { String(describing: type(of: $0)) } ?? "nil",
             "usageVisible": delegate.usagePageView?.window === window && !(delegate.usagePageView?.isHiddenOrHasHiddenAncestor ?? true),
+            "monitorVisible": delegate.taskMonitorPage?.window === window && !(delegate.taskMonitorPage?.isHiddenOrHasHiddenAncestor ?? true),
             "budgetVisible": delegate.budgetPage?.window === window && !(delegate.budgetPage?.isHiddenOrHasHiddenAncestor ?? true),
             "selectedSegment": picker.selectedSegment, "mainPage": delegate.mainPage]
 }
@@ -99,6 +102,9 @@ for cycle in 0..<8 {
     picker.selectedSegment = 0
     _ = picker.sendAction(picker.action, to: picker.target)
     states.append(snapshot("usage-cycle-\(cycle)"))
+    picker.selectedSegment = 2
+    _ = picker.sendAction(picker.action, to: picker.target)
+    states.append(snapshot("monitor-cycle-\(cycle)"))
     picker.selectedSegment = 1
     _ = picker.sendAction(picker.action, to: picker.target)
     states.append(snapshot("budgets-cycle-\(cycle)"))
@@ -183,6 +189,62 @@ let report: [String: Any] = ["beforeLayout": rect(beforeLayout), "states": state
                            "scopeWidths": scopeWidths, "selectedChoices": selectedChoices,
                            "backendStarted": delegate.backend.process != nil || delegate.backend.url != nil,
                            "windowVisible": window.isVisible]
+
+// Native visual QA for the newly shared settings and snapshot-only popover.
+func review(_ name: String, _ view: NSView) {
+    guard let folder = ProcessInfo.processInfo.environment["CODEX_USAGE_REVIEW_OUT"] else { return }
+    view.layoutSubtreeIfNeeded()
+    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+    bitmap.bitmapData!.initialize(repeating: 0, count: bitmap.bytesPerRow * bitmap.pixelsHigh)
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    let canvas = NSImage(size: view.bounds.size); canvas.lockFocus()
+    NSColor(calibratedWhite: 0.96, alpha: 1).setFill(); NSRect(origin: .zero, size: view.bounds.size).fill()
+    let foreground = NSImage(size: view.bounds.size); foreground.addRepresentation(bitmap)
+    foreground.draw(in: NSRect(origin: .zero, size: view.bounds.size), from: .zero, operation: .sourceOver, fraction: 1)
+    canvas.unlockFocus()
+    let composed = NSBitmapImageRep(data: canvas.tiffRepresentation!)!
+    try! composed.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: folder).appendingPathComponent(name + ".png"))
+}
+let settings = UsageSettingsController()
+let dataSettings = UpdateStatusController(embedded: true)
+settings.mountData(dataSettings.content)
+settings.update(usagePreferences, monitor: ["settings": ["delivery": "system", "defaultMode": "once", "retentionDays": 30, "notifyCompleted": true, "notifyFailures": true]])
+let settingsRoot = settings.window!.contentView!
+let tabs = descendants(settingsRoot).compactMap { $0 as? NSTabView }.first!
+precondition(tabs.tabViewItems.count == 4, "Settings exposes four pages")
+let reminderPage = tabs.tabViewItems.first { $0.identifier as? String == "reminders" }!.view!
+let retention = descendants(reminderPage).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "retentionDays" }!
+precondition(retention.selectedItem?.representedObject as? String == "30", "Settings must show the stored retention rather than a popup default")
+for page in tabs.tabViewItems {
+    tabs.selectTabViewItem(page); settingsRoot.layoutSubtreeIfNeeded()
+    precondition(!settingsRoot.hasAmbiguousLayout, "Settings outer layout must be determined")
+    review("settings-" + (page.identifier as! String), settingsRoot)
+}
+precondition(dataSettings.window == nil && !settings.window!.isVisible, "Embedded status creates no extra window and tests show no UI")
+let popover = StatusDetailController()
+popover.update(summary: ["total_tokens": 1280000, "input_tokens": 1120000, "cached_input_tokens": 1050000, "output_tokens": 160000],
+    quota: QuotaSnapshot(windows: [QuotaWindow(label: "每周", remaining: 68, resetsAt: Date().addingTimeInterval(3600))], updated: Date()),
+    monitor: ["active": 3, "unread": 2], stamp: "演示数据 · 14:30")
+let popoverWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 390), styleMask: [.borderless], backing: .buffered, defer: false)
+popoverWindow.isReleasedWhenClosed = false; popoverWindow.contentView = popover.view
+review("menu-detail", popover.view)
+let selectable = descendants(popover.view).compactMap { $0 as? NSTextField }.filter { $0.isSelectable }
+precondition(selectable.count >= 5, "Detail fields are selectable without read-triggered queries")
+delegate.switchMainPage("monitor")
+delegate.taskMonitorPage?.update(["section": "watches", "query": "", "page": 0, "pages": 1, "total": 3,
+    "summary": ["active": 3, "unread": 2], "sourceStatus": ["scanning": false],
+    "rows": [["id": "demo-1", "title": "修复预算筛选后的统计范围", "project": "codex-usage", "status": "running", "mode": "once", "active": true],
+             ["id": "demo-2", "title": "检查发布打包流程", "project": "desktop-tools", "status": "idle", "mode": "each", "active": true],
+             ["id": "demo-3", "title": "任务日志暂时不可读取", "project": "sample-project", "status": "unknown", "sourceError": "等待来源恢复，未推断为结束", "active": true]]])
+review("monitor-native", root)
+let selector = TaskMonitorPage(selecting: true) { _, _ in }
+let selectorWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 520), styleMask: [.borderless], backing: .buffered, defer: false)
+selectorWindow.isReleasedWhenClosed = false; selectorWindow.contentView = selector
+selector.update(["section": "tasks", "query": "", "page": 0, "pages": 1, "total": 1, "rows": [["id": "demo-1", "title": "示例：正在执行的本轮", "turnID": "turn-1", "status": "running", "selectable": true]]])
+review("monitor-selector", selector)
+selectorWindow.contentView = nil; selectorWindow.close(); popoverWindow.contentView = nil; popoverWindow.close()
+settings.window?.close()
+
 let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
 print(String(data: data, encoding: .utf8)!)
 window.delegate = nil
@@ -254,12 +316,13 @@ class BudgetNavigationTests(unittest.TestCase):
             self.assertAlmostEqual(report["widthBeforeChoices"], report["widthAfterChoices"], delta=1, msg=evidence)
             self.assertAlmostEqual(report["widthBeforeChoices"], report["widthAfterSelection"], delta=1, msg=evidence)
             for state in report["states"]:
-                page = "usage" if state["page"].startswith("usage") else "budgets"
+                page = "usage" if state["page"].startswith("usage") else "monitor" if state["page"].startswith("monitor") else "budgets"
                 with self.subTest(page=state["page"]):
                     self.assertEqual(state["mainPage"], page, evidence)
                     self.assertTrue(state["sameWindow"], evidence)
                     self.assertEqual(state["usageVisible"], page == "usage", evidence)
                     self.assertEqual(state["budgetVisible"], page == "budgets", evidence)
+                    self.assertEqual(state["monitorVisible"], page == "monitor", evidence)
                     self.assertFalse(state["pickerHidden"], evidence)
                     self.assertTrue(state["pickerInside"], evidence)
                     self.assertTrue(state["pickerHit"], evidence)

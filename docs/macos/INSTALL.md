@@ -2,19 +2,19 @@
 
 本指南面向 Intel 和 Apple Silicon Mac。安装发行版不需要额外安装 Python、Homebrew 或 Apple Command Line Tools。源码构建另见 [构建指南](BUILDING.md)。
 
-当前发行版为 **v1.0.1**，使用 ad hoc 签名，未经过 Developer ID 签名或 Apple 公证。免费安装助手减少首次安装的手工步骤；它不能赋予 Apple 公证信任，也不能保证绕过组织管理策略。用户应先确认信任本仓库和本次发布。
+当前发行版为 **v1.0.2**，使用 ad hoc 签名，未经过 Developer ID 签名或 Apple 公证。免费安装助手减少首次安装的手工步骤；它不能赋予 Apple 公证信任，也不能保证绕过组织管理策略。用户应先确认信任本仓库和本次发布。
 
 ## 安装助手
 
 ### 在线安装
 
-在 macOS「终端」执行 [README 中的安装命令](../../README.md#macos自动选择芯片并安装推荐)。命令从 v1.0.1 Release 下载独立的 `install.sh`，保存到临时目录，再用系统 `/bin/bash` 执行。也可先查看 [脚本源码](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh)。
+在 macOS「终端」执行 [文档站的安装命令](https://asher-xunzhang.github.io/codex-usage/installation.html#macos)。命令从 v1.0.2 Release 下载独立的 `install.sh`，保存到临时目录，再用系统 `/bin/bash` 执行。也可先查看 [脚本源码](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh)。
 
 助手会：
 
 1. 检测实际芯片并选择 Intel 或 Apple Silicon 发布包；在 Rosetta 终端中也会选择 Apple Silicon 版本。
 2. 展示固定版本、来源、目标路径和隔离处理说明，要求在交互终端输入 `install` 确认。
-3. 下载固定的 v1.0.1 ZIP，核对脚本中固定的 SHA-256，解压后检查 App 的签名完整性。
+3. 下载固定的 v1.0.2 ZIP，核对脚本中固定的 SHA-256，解压后检查 App 的签名完整性。
 4. 仅处理新安装这份 App 的隔离属性，安装到 `~/Applications/Codex用量.app`，随后启动。
 
 没有 `--yes` 或 `--force` 参数。取消确认、没有交互终端、校验失败或目标 App 已存在时，助手停止，不覆盖旧版本。不要通过 `sudo` 运行；脚本会拒绝以 root 身份安装。
@@ -25,30 +25,30 @@ SHA-256 用于核对下载内容是否与脚本预期一致；ad hoc 签名用�
 
 ### 从本地源码或 PR 分支预览
 
-README 的在线脚本地址固定指向 v1.0.1 Release 的独立安装助手。评审尚未合并的 PR 时，在该分支仓库根目录运行：
+README 的在线脚本地址固定指向 v1.0.2 Release 的独立安装助手。评审尚未合并的 PR 时，在该分支仓库根目录运行：
 
 ```sh
 /bin/bash scripts/install.sh --help
 /bin/bash scripts/install.sh
 ```
 
-仓库脚本安装其 `--help` 标明的固定发行 App，并不编译当前分支。发行源码快照中的脚本可能对应较早版本；安装 v1.0.1 请使用发行页的独立 `install.sh`。
+仓库脚本安装其 `--help` 标明的固定发行 App，并不编译当前分支。发行源码快照中的脚本可能对应较早版本；安装 v1.0.2 请使用发行页的独立 `install.sh`。
 
 ### 离线安装
 
-提前取得同一发行页中的独立 `install.sh` 和 [v1.0.1 发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1)中与芯片匹配的完整 ZIP。把下例路径换成实际文件路径：
+提前取得同一发行页中的独立 `install.sh` 和 [v1.0.2 发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2)中与芯片匹配的完整 ZIP。把下例路径换成实际文件路径：
 
 ```sh
 /bin/bash ./install.sh \
-  --archive "$HOME/Downloads/codex-usage-desktop-v1.0.1-Intel.zip"
+  --archive "$HOME/Downloads/codex-usage-desktop-v1.0.2-Intel.zip"
 ```
 
-Apple Silicon 使用文件名以 `AppleSilicon.zip` 结尾的资产。离线模式同样校验固定摘要，只接受当前脚本对应架构的 v1.0.1 发布包；不能用于任意 ZIP、修改过的 App 或 GitHub 的 Source code 包。
+Apple Silicon 使用文件名以 `AppleSilicon.zip` 结尾的资产。离线模式同样校验固定摘要，只接受当前脚本对应架构的 v1.0.2 发布包；不能用于任意 ZIP、修改过的 App 或 GitHub 的 Source code 包。
 
-| 架构 | v1.0.1 ZIP 的 SHA-256 文件 |
+| 架构 | v1.0.2 ZIP 的 SHA-256 文件 |
 | --- | --- |
-| Intel | [Intel.zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-Intel.zip.sha256) |
-| Apple Silicon | [AppleSilicon.zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.1/codex-usage-desktop-v1.0.1-AppleSilicon.zip.sha256) |
+| Intel | [Intel.zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-Intel.zip.sha256) |
+| Apple Silicon | [AppleSilicon.zip.sha256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-AppleSilicon.zip.sha256) |
 
 独立安装助手内置这两份最终 ZIP 的固定摘要。发行页另提供 `install.sh.sha256`，用于核对脚本文件。
 
@@ -85,7 +85,7 @@ Apple Silicon 使用文件名以 `AppleSilicon.zip` 结尾的资产。离线模�
 
 ## 使用 Finder 手动安装
 
-1. 在「 → 关于本机」查看芯片，使用 Safari 从 [正式发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.1)下载对应 ZIP。
+1. 在「 → 关于本机」查看芯片，使用 Safari 从 [正式发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2)下载对应 ZIP。
 2. 完整解压，移动其中的 `Codex用量.app` 到「应用程序」后双击。
 3. 如提示开发者无法验证或 Apple 无法检查恶意软件，确认来源后，到「系统设置 → 隐私与安全」中点击「仍要打开」，再确认「打开」。该 App 会被保存为例外，之后通常可以直接双击启动。[Apple 官方说明](https://support.apple.com/en-us/102445)
 

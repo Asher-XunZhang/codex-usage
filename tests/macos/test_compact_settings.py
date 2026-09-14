@@ -15,7 +15,7 @@ class CompactSettingsTests(unittest.TestCase):
     def setUpClass(cls):
         source = (macos_source('Main.swift')).read_text()
         methods = ''.join(declaration(source, marker) for marker in [
-            '    func applyInterval(', '    func scheduleCompact()',
+            '    func applyInterval(', '    func flushIntervalSettings(', '    func scheduleCompact()',
             '    func applyCapsuleTheme(',
         ])
         fixture = r'''import AppKit
@@ -33,6 +33,7 @@ final class Backend { var url: URL?, stopping = false }
 final class Collector { var busy = false, stopping = false }
 final class Monitor { var isWatching = true }
 final class Fixture {
+    let settingsQueue = MainSettingsQueue()
     let capsuleState = State(), backend = Backend(), collector = Collector(), compactMonitor = Monitor()
     var autoSeconds = 5 { didSet { capsuleState.refreshSeconds = autoSeconds } }
     var compactMode = true, compactDirty = true, terminating = false, applyingHostState = false
@@ -65,7 +66,7 @@ case "interval":
     precondition(scheduled.isValid && delegate.capsuleState.refreshSeconds == 60)
     let pending = Cancel(); delegate.settingsCommand = pending
     delegate.applyInterval(0)
-    precondition(!scheduled.isValid && delegate.compactTimer == nil && pending.cancelled)
+    precondition(!scheduled.isValid && delegate.compactTimer == nil)
     precondition(delegate.autoSeconds == 0 && delegate.capsuleState.refreshSeconds == 0)
     precondition(usagePreferences.integer(forKey: "refreshSeconds") == 0)
     delegate.scheduleCompact()
@@ -88,6 +89,8 @@ case "interval":
     precondition(delegate.sent.count == sent, "Incoming host settings must not echo back over IPC")
     delegate.posts[0](.failure(NSError(domain: "test", code: 1)))
     precondition(delegate.autoSeconds == 0, "A stale settings failure must not revert a newer choice")
+    precondition(delegate.settingsQueue.pending == 0 && delegate.posts.count == 1)
+    delegate.flushIntervalSettings()
     delegate.posts[1](.success([:]))
     precondition(delegate.autoSeconds == 0 && delegate.manualScans == 1)
 case "theme":
@@ -120,7 +123,7 @@ print(CommandLine.arguments[1] + " passed")
         source = root / 'main.swift'
         source.write_text(fixture)
         cls.binary = root / 'check'
-        compiled = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(source), '-o', str(cls.binary)],
+        compiled = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(source), str(macos_source('MainState.swift')), '-o', str(cls.binary)],
                                   capture_output=True, text=True, timeout=90)
         if compiled.returncode:
             raise AssertionError(compiled.stderr)

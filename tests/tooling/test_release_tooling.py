@@ -161,7 +161,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
                     'resources/windows/runtimes/manifest.json',
                     'resources/macos/third-party-licenses/LICENSE', 'integrations/codex-token-usage/SKILL.md',
                     'integrations/codex-token-usage/agents/openai.yaml', 'integrations/codex-token-usage/scripts/token_usage.py', 'docs/README.md',
-                    'docs/macos/README.md', 'docs/macos/VALIDATION.md', 'docs/macos/images/demo.png',
+                    'docs/macos/README.md', 'docs/macos/VALIDATION.md', 'docs/macos/images/demo.png', 'docs/macos/screenshots/motion.mp4',
                     'docs/windows/README.md', 'docs/windows/images/1.3.1/demo.png',
                     'docs/windows/images/1.3.1/capture-manifest.json', 'docs/common/README.md',
                     'docs/common/images/icon.png',

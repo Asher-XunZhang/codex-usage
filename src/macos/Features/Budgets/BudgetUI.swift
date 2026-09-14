@@ -58,6 +58,16 @@ private class BudgetActionButton: FeedbackButton {
     @objc private func performCallback() { callback?() }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
+private final class BudgetMoreButton: NSPopUpButton {
+    private let commands: [() -> Void]
+    init(_ items: [(String, () -> Void)]) {
+        commands = items.map { $0.1 }; super.init(frame: .zero, pullsDown: true)
+        addItem(withTitle: "更多…"); for item in items { addItem(withTitle: item.0) }
+        target = self; action = #selector(chosen); setAccessibilityLabel("预算更多操作")
+    }
+    @objc private func chosen() { let index = indexOfSelectedItem - 1; if commands.indices.contains(index) { commands[index]() } }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
 private final class BudgetRuleButton: BudgetActionButton {
     override var isFlipped: Bool { false }
     private let nameText: String
@@ -150,6 +160,13 @@ final class BudgetPage: NSView {
     private var expectedRevision = 0
     private var pendingSave = false
     private var pendingPin = false
+    private var pinRequest: (id: String, ticket: String)?
+    private var pinDeadline: DispatchWorkItem?
+    private var pinFailure: String?
+    private var quotaWindowExplanation: NSTextField?
+    private var showingPolicyComparison = Set<String>()
+    private var pendingRequestID: String?
+    private var saveDeadline: DispatchWorkItem?
     private var controls: [String: NSControl] = [:]
     private var sections: [String: NSView] = [:]
     private var priceFields: [[String: NSTextField]] = []
@@ -163,6 +180,45 @@ final class BudgetPage: NSView {
     private var deferredNavigation: (String?, Bool)?
     private var trackingMenus = Set<ObjectIdentifier>()
     private var deferredChoices = false
+    private var drafts: [String: BudgetObject] = [:]
+    private var draftBookInvalid = false
+    private(set) var draftPersistenceError: String?
+    var saveInFlight: Bool { pendingSave }
+    var draftBlocksClosing: Bool { !draftBookInvalid && draftPersistenceError != nil }
+    private var editorReturnSelection: String?
+    private var recoveryArmed = false
+
+    func persistenceFailed(_ error: String) { draftPersistenceError = error; message.stringValue = error }
+    func persistenceSucceeded() { draftPersistenceError = nil }
+    func snapshotDraftBook() -> [String: Any]? {
+        guard !draftBookInvalid else { return nil }
+        captureDraft()
+        guard drafts.count <= 50 else { persistenceFailed("最多保留 50 项草稿，请取消不再需要的草稿后重试。"); return nil }
+        return ["version": 2, "drafts": drafts, "activeID": editing ? (editingRule["id"] as? String ?? "") : ""]
+    }
+    private func captureDraft() {
+        if let draft = snapshotDraft(), let rule = draft["rule"] as? BudgetObject, let id = rule["id"] as? String { drafts[id] = draft }
+    }
+    func restoreDraftData(_ data: Data) {
+        guard data.count <= 524288, let book = try? JSONSerialization.jsonObject(with: data) as? BudgetObject else {
+            draftBookInvalid = true; persistenceFailed("草稿无法读取，原记录已保留。请备份并恢复草稿。"); showList(); return
+        }
+        restoreDraftBook(book)
+    }
+    func resetDraftBook() { draftBookInvalid = false; drafts = [:]; editing = false; draftPersistenceError = nil; showList() }
+    func restoreDraftBook(_ book: [String: Any]) {
+        if budgetNumber(book["version"]) == 1,
+           let rule = book["rule"] as? BudgetObject, rule["id"] is String, book["values"] is BudgetObject {
+            restoreDraft(book); captureDraft(); return
+        }
+        guard budgetNumber(book["version"]) == 2, let items = book["drafts"] as? [String: BudgetObject], items.count <= 50,
+              items.allSatisfy({ id, draft in (draft["rule"] as? BudgetObject)?["id"] as? String == id && draft["values"] is BudgetObject }) else {
+            draftBookInvalid = true; persistenceFailed("草稿格式无法读取，原记录已保留。请备份并恢复草稿。"); showList(); return
+        }
+        drafts = items
+        if let id = book["activeID"] as? String, let draft = drafts[id] { restoreDraft(draft) }
+        else { showList() }
+    }
 
     init(action: @escaping (String, [String: Any]) -> Void) {
         self.actionHandler = action
@@ -180,13 +236,8 @@ final class BudgetPage: NSView {
         self.state = state
         if editing {
             // Only choice menus may be refreshed during typing; draft fields remain untouched.
-            refreshChoices()
-            // A query/notification error does not mean that a rule write failed.
-            // Only the save reply may reject this draft; a committed revision can confirm it.
-            if pendingSave, let saved = rules.first(where: { ($0["id"] as? String) == (editingRule["id"] as? String) }),
-                      (budgetNumber(saved["revision"]) ?? 0) > Double(expectedRevision) {
-                acknowledgeSave(id: saved["id"] as? String ?? "", revision: Int(budgetNumber(saved["revision"]) ?? 0), error: nil)
-            }
+            refreshChoices(); refreshQuotaWindows()
+            // A newer published revision can belong to another edit. Only the command reply confirms this save.
             return
         }
         if selectedBudgetID == nil { selectedBudgetID = rules.first?["id"] as? String }
@@ -194,26 +245,50 @@ final class BudgetPage: NSView {
     }
 
     func navigate(budgetID: String?, create: Bool = false) {
-        if editing {
+        if pendingSave {
             deferredNavigation = (budgetID, create)
             message.stringValue = "已保留当前编辑。完成或取消后将打开新请求。"
             return
         }
+        captureDraft(); editing = false
         if create { beginEditing(nil); return }
         if let id = budgetID { selectedBudgetID = id }
         else if selectedBudgetID == nil { selectedBudgetID = rules.first?["id"] as? String }
+        if let id = selectedBudgetID, let draft = drafts[id] { restoreDraft(draft); return }
         showList(); actionHandler("viewing", ["id": selectedBudgetID ?? "", "editing": false])
+        actionHandler("draftChanged", [:])
     }
 
-    func acknowledgeSave(id: String, revision: Int?, error: String?) {
+    func acknowledgeSave(id: String, revision: Int?, error: String?, requestID: String? = nil) {
         guard editing, pendingSave, id == editingRule["id"] as? String else { return }
+        if let requestID = requestID, requestID != pendingRequestID { return }
         if let error = error, !error.isEmpty {
+            saveDeadline?.cancel(); saveDeadline = nil; pendingRequestID = nil
             pendingSave = false; setEditorEnabled(true); errorText?.stringValue = error; return
         }
         guard let revision = revision, revision > expectedRevision else { return }
         selectedBudgetID = id
-        if pendingPin { actionHandler("pin", ["id": id]) }
-        finishEditing(message: "已保存，将持续监测。")
+        let shouldPin = pendingPin
+        finishEditing(message: "已保存。")
+        if shouldPin { requestPin(id) }
+    }
+
+    private func requestPin(_ id: String) {
+        let ticket = UUID().uuidString
+        pinDeadline?.cancel(); pinRequest = (id, ticket); pinFailure = nil
+        message.stringValue = "正在显示浮窗…"; if !editing { showList() }
+        let work = DispatchWorkItem { [weak self] in
+            self?.acknowledgePin(id: id, requestID: ticket, error: "尚未收到浮窗显示确认")
+        }
+        pinDeadline = work; DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: work)
+        actionHandler("pin", ["id": id, "requestID": ticket])
+    }
+    func acknowledgePin(id: String, requestID: String, error: String?) {
+        guard pinRequest?.id == id, pinRequest?.ticket == requestID else { return }
+        pinDeadline?.cancel(); pinDeadline = nil; pinRequest = nil
+        pinFailure = error == nil ? nil : id
+        message.stringValue = error.map { "预算已保存；浮窗未确认打开：\($0)。可只重试显示。" } ?? "预算已保存，已在浮窗显示。"
+        if !editing { showList() }
     }
 
     /// Store raw text as well as the base rule, so even an unfinished/invalid input survives main-process exit.
@@ -227,12 +302,14 @@ final class BudgetPage: NSView {
             else if let field = control as? NSTextField { values[key] = field.stringValue }
         }
         let prices = priceFields.map { row in row.mapValues { $0.stringValue } }
-        return ["version": 1, "rule": editingRule, "expectedRevision": expectedRevision, "values": values, "prices": prices]
+        return ["version": 1, "rule": editingRule, "expectedRevision": expectedRevision, "values": values, "prices": prices,
+                "returnSelection": editorReturnSelection ?? ""]
     }
 
     func restoreDraft(_ draft: [String: Any]) {
         guard !editing, let rule = draft["rule"] as? BudgetObject, let values = draft["values"] as? BudgetObject else { return }
         beginEditing(rule)
+        editorReturnSelection = (draft["returnSelection"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? selectedBudgetID
         expectedRevision = Int(budgetNumber(draft["expectedRevision"]) ?? budgetNumber(rule["revision"]) ?? 0)
         for (key, value) in values {
             if let popup = controls[key] as? NSPopUpButton, let value = value as? String { select(popup, value: value, preserveUnknown: true) }
@@ -267,9 +344,32 @@ final class BudgetPage: NSView {
         return result
     }
     private func showList() {
+        if draftBookInvalid {
+            let body = budgetStack([budgetText("草稿需要恢复", 18, .medium), budgetText(draftPersistenceError ?? "草稿无法读取"),
+                BudgetActionButton("备份损坏草稿并重新开始…") { [weak self] in self?.actionHandler("recoverDrafts", [:]) }])
+            replaceContent(scroll(body), heading: "预算与提醒", subtitle: "已保存的预算继续监测", buttons: []); return
+        }
+        if (state["recovery"] as? BudgetObject)?["required"] as? Bool == true {
+            let body = budgetStack([
+                budgetText("预算配置无法读取", 18, .medium),
+                budgetText(state["error"] as? String ?? "原配置已保留，恢复前不会写入。"),
+                budgetText((state["recovery"] as? BudgetObject)?["path"] as? String ?? "", 11),
+                BudgetActionButton(recoveryArmed ? "确认备份并重新开始" : "备份原配置并重新开始…") { [weak self] in
+                    guard let self = self else { return }
+                    if self.recoveryArmed { self.actionHandler("recover", ["confirm": true]); self.recoveryArmed = false }
+                    else { self.recoveryArmed = true; self.showList() }
+                },
+                BudgetActionButton("取消恢复") { [weak self] in self?.recoveryArmed = false; self?.showList() }
+            ])
+            replaceContent(scroll(body), heading: "预算与提醒", subtitle: "恢复前先备份原文件", buttons: []); return
+        }
         controls.removeAll(); sections.removeAll(); priceFields.removeAll(); priceStack = nil; errorText = nil; saveButton = nil
         let list = budgetStack(spacing: 10)
         list.addArrangedSubview(budgetText("我的预算", 11, .medium, color: .secondaryLabelColor))
+        for id in drafts.keys.sorted() {
+            let name = (drafts[id]?["values"] as? BudgetObject)?["name"] as? String ?? "未命名预算"
+            list.addArrangedSubview(BudgetActionButton("继续草稿 · " + name) { [weak self] in self?.navigate(budgetID: id) })
+        }
         for rule in rules {
             let id = rule["id"] as? String ?? ""
             let summary = summaries.first { ($0["id"] as? String) == id } ?? [:]
@@ -311,12 +411,21 @@ final class BudgetPage: NSView {
         let id = rule["id"] as? String ?? ""
         let summary = summaries.first { ($0["id"] as? String) == id } ?? [:]
         var current = rule
-        for key in ["kind", "currency", "period", "model", "task", "tokenMetric", "windowMinutes"] { if let value = summary[key] { current[key] = value } }
+        for key in ["kind", "currency", "period", "model", "task", "tokenMetric", "windowMinutes", "prices", "fx", "amount"] { if let value = summary[key] { current[key] = value } }
         let kind = current["kind"] as? String ?? "token"
         let currency = current["currency"] as? String ?? "USD"
         let body = budgetStack(spacing: 18)
         let edit = BudgetActionButton("编辑") { [weak self] in self?.beginEditing(rule) }
-        let header = budgetStack([budgetText(rule["name"] as? String ?? "预算", 18, .medium), NSView(), edit], horizontal: true)
+        let pin = BudgetActionButton(pinRequest?.id == id ? "正在显示…" : pinFailure == id ? "仅重试显示浮窗" : "在浮窗显示") { [weak self] in self?.requestPin(id) }
+        let more = BudgetMoreButton([
+            (rule["enabled"] as? Bool ?? true ? "停用预算" : "启用预算", { [weak self] in self?.actionHandler("toggle", ["id": id, "enabled": !(rule["enabled"] as? Bool ?? true), "expectedRevision": rule["revision"] ?? 0]) }),
+            ("复制预算…", { [weak self] in
+                guard let self = self else { return }; var copy = rule; copy["id"] = UUID().uuidString; copy["revision"] = 0
+                copy["name"] = (rule["name"] as? String ?? "预算") + " 副本"; self.beginEditing(copy)
+            }),
+            ("删除预算…", { [weak self] in self?.deleteArmedID = id; self?.showList() })
+        ])
+        let header = budgetStack([budgetText(rule["name"] as? String ?? "预算", 18, .medium), NSView(), edit, pin, more], horizontal: true)
         body.addArrangedSubview(header); header.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
         body.addArrangedSubview(budgetText(kind == "token" ? metricName(current["tokenMetric"] as? String ?? "total") : kindName(kind), 12, color: .secondaryLabelColor))
         if summary["scheduledChange"] as? Bool == true { body.addArrangedSubview(budgetText("修改已保存，将于下期生效；以下仍为本期有效范围。", 12, color: .secondaryLabelColor)) }
@@ -324,8 +433,8 @@ final class BudgetPage: NSView {
         let messageText = summary["message"] as? String ?? summary["reason"] as? String ?? "等待预算数据更新"
         if !messageText.isEmpty { body.addArrangedSubview(budgetText(messageText, 12, color: ["exhausted", "exceeded"].contains(status) ? .systemRed : .secondaryLabelColor)) }
         let overage = budgetNumber(summary["overage"]) ?? 0
-        let lowerBound = summary["coverage"] as? String == "partial" && ["exhausted", "exceeded"].contains(status)
-        body.addArrangedSubview(budgetText(kind == "quota" ? "官方剩余额度" : lowerBound ? (overage > 0 ? (kind == "money" ? "已知至少超出 · 估算" : "已知至少超出") : "已知用量已达到预算") : overage > 0 ? "已超出预算" : "剩余预算", 12, color: .secondaryLabelColor))
+        let lowerBound = summary["coverage"] as? String == "partial"
+        body.addArrangedSubview(budgetText(kind == "quota" ? "官方剩余额度" : lowerBound ? (overage > 0 ? "已知至少超出" : status == "exhausted" ? "已知用量已达到预算" : "剩余预算待确认") : overage > 0 ? "已超出预算" : "剩余预算", 12, color: .secondaryLabelColor))
         let known = !["unknown", "partial", "source_invalid", "scope_invalid"].contains(status)
         let balance = known ? (overage > 0 && kind != "quota" ? overage : budgetNumber(summary["remaining"])) : nil
         let formattedBalance = budgetFormat(balance, kind: kind, currency: currency)
@@ -335,7 +444,7 @@ final class BudgetPage: NSView {
         body.addArrangedSubview(meter); meter.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
         let formattedUsed = budgetFormat(budgetNumber(summary["used"]), kind: kind, currency: currency)
         let used = lowerBound ? formattedUsed.replacingOccurrences(of: "≈ ", with: "") : formattedUsed
-        let limit = budgetFormat(budgetNumber(rule["amount"]), kind: kind, currency: currency)
+        let limit = budgetFormat(budgetNumber(summary["amount"] ?? rule["amount"]), kind: kind, currency: currency)
         body.addArrangedSubview(budgetText(kind == "quota" ? "官方余量 ≤ \(limit) 时提醒" : "已用 \(lowerBound ? "≥ " : "")\(used)    额度 \(limit)", 12, color: .secondaryLabelColor))
         addDetail(body, "当前周期", periodDescription(current, summary: summary))
         addDetail(body, "统计范围", kind == "quota" ? "账号级 · \(Int(budgetNumber(current["windowMinutes"]) ?? 10080)) 分钟额度窗口" : "\(choiceLabel("models", id: current["model"] as? String ?? "all")) · \(choiceLabel("tasks", id: current["task"] as? String ?? "all"))")
@@ -348,24 +457,58 @@ final class BudgetPage: NSView {
         if let updated = budgetNumber(summary["updatedAt"]) { addDetail(body, "更新于", dateString(updated, zone: (rule["period"] as? BudgetObject)?["timezone"] as? String)) }
         if let coverage = summary["coverage"] as? String, coverage != "complete" { addDetail(body, "数据覆盖", lowerBound ? "以上为已知消费下界；缺失类别仍未计入，实际消费可能更高。" : coverage == "partial" ? "部分数据缺失，剩余额度暂无法确认" : "尚无完整数据") }
         if (summary["paused"] as? Bool ?? false) { addDetail(body, "提醒状态", "视觉提醒暂停，统计继续更新") }
-        let actionRow = budgetStack([
-            BudgetActionButton("在浮窗显示") { [weak self] in self?.actionHandler("pin", ["id": id]) },
-            BudgetActionButton(rule["enabled"] as? Bool ?? true ? "停用预算" : "启用预算") { [weak self] in self?.actionHandler("toggle", ["id": id, "enabled": !(rule["enabled"] as? Bool ?? true), "expectedRevision": rule["revision"] ?? 0]) }
-        ], horizontal: true)
-        body.addArrangedSubview(actionRow)
+        if let diagnostics = summary["priceDiagnostics"] as? [BudgetObject], !diagnostics.isEmpty {
+            body.addArrangedSubview(budgetText("缺价与数据诊断", 13, .medium))
+            let names = ["input": "输入", "cachedInput": "缓存输入", "output": "输出"]
+            for item in diagnostics.prefix(20) {
+                let missing = (item["missingPrices"] as? [String] ?? []).map { names[$0] ?? $0 }
+                var reasons = missing.isEmpty ? [] : ["缺少 " + missing.joined(separator: "、") + " 单价"]
+                if item["cacheClassificationUnknown"] as? Bool == true { reasons.append("缓存分类尚不可靠") }
+                if item["usageIncomplete"] as? Bool == true { reasons.append("用量类别不完整") }
+                addDetail(body, item["model"] as? String ?? "未知模型", reasons.joined(separator: "；"))
+            }
+            body.addArrangedSubview(BudgetActionButton("补齐缺失模型单价…") { [weak self] in
+                guard let self = self else { return }; self.beginEditing(rule)
+                let existing = Set(self.priceFields.compactMap { $0["model"]?.stringValue })
+                for item in diagnostics where !(item["missingPrices"] as? [String] ?? []).isEmpty {
+                    if let model = item["model"] as? String, !existing.contains(model) { self.addPriceRow(["model": model]) }
+                }
+                self.message.stringValue = "已定位缺价模型。单价由你确认；默认下期生效，也可选择立即重算。"; self.draftChanged()
+            })
+        }
+        for issue in (summary["sourceIssues"] as? [String] ?? []).prefix(5) { addDetail(body, "来源提示", issue) }
+        if summary["scheduledChange"] as? Bool == true {
+            body.addArrangedSubview(BudgetActionButton(showingPolicyComparison.contains(id) ? "收起本期／下期对照" : "查看本期／下期对照") { [weak self] in
+                guard let self = self else { return }
+                if self.showingPolicyComparison.contains(id) { self.showingPolicyComparison.remove(id) } else { self.showingPolicyComparison.insert(id) }; self.showList()
+            })
+            if showingPolicyComparison.contains(id) {
+                for (label, policy) in [("本期", current), ("下期", rule)] {
+                    let policyKind = policy["kind"] as? String ?? "token"
+                    addDetail(body, label + "口径", kindName(policyKind) + (policyKind == "token" ? " · " + metricName(policy["tokenMetric"] as? String ?? "total") : ""))
+                    addDetail(body, label + "额度", budgetFormat(budgetNumber(policyKind == "quota" ? policy["quotaFloor"] ?? policy["amount"] : policy["amount"]), kind: policyKind, currency: policy["currency"] as? String ?? "USD"))
+                    addDetail(body, label + "范围", policyKind == "quota" ? "账号级" : choiceLabel("models", id: policy["model"] as? String ?? "all") + " · " + choiceLabel("tasks", id: policy["task"] as? String ?? "all"))
+                    addDetail(body, label + "时区", (policy["period"] as? BudgetObject)?["timezone"] as? String ?? "—")
+                    addDetail(body, label + "周期", policyKind == "quota" ? "\(Int(budgetNumber(policy["windowMinutes"]) ?? 0)) 分钟官方窗口" : periodDescription(policy, summary: label == "本期" ? summary : [:]))
+                    if policyKind == "money", policy["currency"] as? String == "CNY" { addDetail(body, label + "汇率", "1 USD = \(numberText(policy["fx"])) CNY") }
+                    for price in policy["prices"] as? [BudgetObject] ?? [] {
+                        addDetail(body, price["model"] as? String ?? "模型", ["input", "cachedInput", "output"].map { numberText(price[$0]) }.joined(separator: " / ") + " USD / 百万 Token")
+                    }
+                }
+            }
+        }
         let pauseRow = budgetStack([
             BudgetActionButton("暂停 30 分钟") { [weak self] in self?.actionHandler("pause", ["id": id, "durationSeconds": 1800]) },
             BudgetActionButton("本周期不再弹出") { [weak self] in self?.actionHandler("pause", ["id": id, "mode": "cycle"]) },
             BudgetActionButton("恢复提醒") { [weak self] in self?.actionHandler("resume", ["id": id]) }
         ], horizontal: true, spacing: 6)
         body.addArrangedSubview(pauseRow)
-        let delete = BudgetActionButton(deleteArmedID == id ? "确认删除此预算" : "删除预算…") { [weak self] in
-            guard let self = self else { return }
-            if self.deleteArmedID == id { self.actionHandler("delete", ["id": id, "expectedRevision": rule["revision"] ?? 0]); self.deleteArmedID = nil }
-            else { self.deleteArmedID = id; self.showList() }
+        if deleteArmedID == id {
+            body.addArrangedSubview(budgetText("删除此预算将停止相应提醒，统计记录不受影响。", 11, color: .secondaryLabelColor))
+            let confirm = BudgetActionButton("确认删除此预算") { [weak self] in self?.actionHandler("delete", ["id": id, "expectedRevision": rule["revision"] ?? 0]); self?.deleteArmedID = nil }
+            confirm.contentTintColor = .systemRed
+            body.addArrangedSubview(budgetStack([confirm, BudgetActionButton("取消删除") { [weak self] in self?.deleteArmedID = nil; self?.showList() }], horizontal: true))
         }
-        delete.contentTintColor = .systemRed; body.addArrangedSubview(delete)
-        if deleteArmedID == id { body.addArrangedSubview(budgetText("再次点击确认删除。统计记录不受影响。", 11, color: .secondaryLabelColor)) }
         if let events = state["events"] as? [BudgetObject] {
             let relevant = events.filter { ($0["ruleID"] as? String ?? $0["budgetID"] as? String) == id }.prefix(5)
             if !relevant.isEmpty {
@@ -374,6 +517,29 @@ final class BudgetPage: NSView {
             }
         }
         return BudgetCard(content: body)
+    }
+    private func quotaWindowOptions() -> [(String, String)] {
+        let windows = (state["quota"] as? BudgetObject)?["windows"] as? [BudgetObject] ?? []
+        var seen = Set<Int>()
+        return windows.compactMap { window in
+            guard let value = budgetNumber(window["duration_minutes"]), value > 0, value <= 525600, value.rounded() == value else { return nil }
+            let minutes = Int(value); guard seen.insert(minutes).inserted else { return nil }
+            let label = minutes == 10080 ? "每周" : minutes % 1440 == 0 ? "\(minutes / 1440) 天" : minutes % 60 == 0 ? "\(minutes / 60) 小时" : "\(minutes) 分钟"
+            return (String(minutes), label + " · 官方窗口")
+        }.sorted { Int($0.0)! < Int($1.0)! }
+    }
+    private func refreshQuotaWindows() {
+        guard let popup = controls["windowMinutes"] as? NSPopUpButton else { return }
+        let selected = popup.selectedItem?.representedObject as? String ?? ""
+        if popup.menu.map({ trackingMenus.contains(ObjectIdentifier($0)) }) == true { deferredChoices = true; return }
+        popup.removeAllItems()
+        for (id, name) in quotaWindowOptions() { popup.addItem(withTitle: name); popup.lastItem?.representedObject = id }
+        select(popup, value: selected, preserveUnknown: true)
+        let quota = state["quota"] as? BudgetObject ?? [:]
+        if quota.isEmpty { quotaWindowExplanation?.stringValue = "尚未读取账号额度；原选择保留，读取成功后再确认窗口。" }
+        else if quota["stale"] as? Bool == true || Date().timeIntervalSince1970 - (budgetNumber(quota["updated_at"]) ?? 0) > 180 { quotaWindowExplanation?.stringValue = "账号额度已过期；当前列出上次读取的窗口，监测将在更新后判断。" }
+        else if !quotaWindowOptions().contains(where: { $0.0 == selected }) { quotaWindowExplanation?.stringValue = "旧选择在当前账号快照中不存在，请选择实际可用窗口。" }
+        else { quotaWindowExplanation?.stringValue = "窗口与重置由账号决定；本工具只监测官方余量下限。" }
     }
     private func addDetail(_ body: NSStackView, _ key: String, _ value: String) {
         let title = budgetText(key, 12, color: .secondaryLabelColor); title.widthAnchor.constraint(equalToConstant: 70).isActive = true
@@ -405,6 +571,7 @@ final class BudgetPage: NSView {
     }
 
     private func beginEditing(_ original: BudgetObject?) {
+        captureDraft(); editorReturnSelection = selectedBudgetID
         editing = true; pendingSave = false; pendingPin = false; controls.removeAll(); sections.removeAll(); priceFields.removeAll()
         let now = Date().timeIntervalSince1970
         editingRule = original ?? ["id": UUID().uuidString, "revision": 0, "name": "", "kind": "token", "amount": 20_000_000,
@@ -429,8 +596,10 @@ final class BudgetPage: NSView {
         basics.addArrangedSubview(amountRow); basics.addArrangedSubview(unitRow)
         let metric = fieldRow("Token 口径", popup("tokenMetric", [("total", "总 Token（缓存与推理不重复计入）"), ("noncached", "非缓存输入 + 输出"), ("output", "仅输出（含推理）")], selected: rule["tokenMetric"] as? String ?? "total"))
         sections["tokenMetric"] = metric; basics.addArrangedSubview(metric)
-        let window = fieldRow("官方窗口 · 分钟", textField("windowMinutes", String(Int(budgetNumber(rule["windowMinutes"]) ?? 10080)), placeholder: "每周 10080；5 小时 300"))
-        sections["window"] = window; basics.addArrangedSubview(window)
+        let window = budgetStack([fieldRow("官方额度窗口", popup("windowMinutes", quotaWindowOptions(), selected: String(Int(budgetNumber(rule["windowMinutes"]) ?? 10080))))], spacing: 6)
+        let explanation = budgetText("", 11, color: .secondaryLabelColor); quotaWindowExplanation = explanation
+        window.addArrangedSubview(explanation); sections["window"] = window; basics.addArrangedSubview(window)
+        refreshQuotaWindows()
         let money = budgetStack(spacing: 12)
         money.addArrangedSubview(fieldRow("币种", popup("currency", [("USD", "USD · 美元"), ("CNY", "CNY · 人民币")], selected: rule["currency"] as? String ?? "USD")))
         money.addArrangedSubview(fieldRow("固定汇率 USD → CNY", textField("fx", String(format: "%g", budgetNumber(rule["fx"]) ?? 1))))
@@ -451,7 +620,10 @@ final class BudgetPage: NSView {
         let dates = budgetStack(spacing: 12)
         dates.addArrangedSubview(budgetText("时间计划", 14, .medium))
         dates.addArrangedSubview(fieldRow("周期", popup("period", [("day", "每日重置"), ("week", "每周重置"), ("month", "每月重置"), ("once", "自定义起止时间"), ("interval", "固定时长重复")], selected: period["type"] as? String ?? "day")))
-        dates.addArrangedSubview(fieldRow("时区", textField("timezone", period["timezone"] as? String ?? TimeZone.current.identifier)))
+        let zone = NSComboBox(frame: .zero); zone.addItems(withObjectValues: TimeZone.knownTimeZoneIdentifiers.sorted())
+        zone.completes = true; zone.hasVerticalScroller = true; zone.numberOfVisibleItems = 12; zone.stringValue = period["timezone"] as? String ?? TimeZone.current.identifier
+        zone.identifier = NSUserInterfaceItemIdentifier("timezone"); zone.setAccessibilityLabel("timezone"); zone.delegate = self; controls["timezone"] = zone
+        dates.addArrangedSubview(fieldRow("时区 · 可输入查找", zone))
         let reset = budgetStack([fieldRow("重置小时 · 0–23", textField("hour", String(Int(budgetNumber(period["hour"]) ?? 0)))), fieldRow("重置分钟 · 0–59", textField("minute", String(Int(budgetNumber(period["minute"]) ?? 0))))], spacing: 12)
         sections["reset"] = reset; dates.addArrangedSubview(reset)
         let weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"].enumerated().map { (String($0.offset + 1), $0.element) }
@@ -482,21 +654,44 @@ final class BudgetPage: NSView {
         notifications.addArrangedSubview(budgetText("用逗号分隔；每周期每级一次，跨过多个节点时合并为最高级。无声音、不强制展开窗口、不打断任务。", 11, color: .secondaryLabelColor))
         notifications.addArrangedSubview(check("enabled", "启用预算监测", rule["enabled"] as? Bool ?? true))
         notifications.addArrangedSubview(check("pin", "保存后在浮窗显示", false))
-        if expectedRevision > 0 {
-            notifications.addArrangedSubview(check("recalculateCurrent", "立即应用并重算本期", false))
-            notifications.addArrangedSubview(budgetText("修改时间、范围或价格默认下期生效；勾选后本期按新规则重算，可能立即达到提醒线。", 11, color: .secondaryLabelColor))
-        }
         form.addArrangedSubview(BudgetCard(content: notifications))
-        let error = budgetText("", 12, color: .systemRed); errorText = error; form.addArrangedSubview(error)
+        let error = budgetText("", 12, color: .systemRed); errorText = error
         let save = BudgetActionButton("保存并启用") { [weak self] in self?.save() }; saveButton = save
         let cancel = BudgetActionButton("取消") { [weak self] in
-            guard let self = self, !self.pendingSave else { return }; self.finishEditing(message: "已取消编辑，原有监测保持不变。")
+            guard let self = self, !self.pendingSave else { return }; self.selectedBudgetID = self.editorReturnSelection
+            self.finishEditing(message: "已取消编辑，原有监测保持不变。")
         }
         controls["cancel"] = cancel
-        let buttons = budgetStack([NSView(), cancel, save], horizontal: true)
-        form.addArrangedSubview(buttons)
+        let keep = BudgetActionButton("保留草稿并返回") { [weak self] in
+            guard let self = self, !self.pendingSave else { return }
+            self.captureDraft(); self.editing = false; self.showList(); self.actionHandler("draftChanged", [:])
+        }; controls["keepDraft"] = keep
+        let copy = BudgetActionButton("另存为新预算") { [weak self] in
+            guard let self = self, !self.pendingSave, var draft = self.snapshotDraft(), var rule = draft["rule"] as? BudgetObject else { return }
+            self.captureDraft(); rule["id"] = UUID().uuidString; rule["revision"] = 0; rule["source"] = self.state["source"]
+            draft["rule"] = rule; draft["expectedRevision"] = 0; self.editing = false; self.restoreDraft(draft)
+        }; controls["saveAs"] = copy
+        let buttons = budgetStack([keep, copy, NSView(), cancel, save], horizontal: true)
+        // AppKit lays out rounded buttons by their alignment rect, whose native
+        // bezel can extend beyond the stack on older macOS versions. Reserve
+        // those actual insets so the page's clipping never trims footer buttons.
+        let footerInsets = [keep, copy, cancel, save].map { $0.alignmentRectInsets }
+        // A centerY row also has to accommodate asymmetric top/bottom bezels.
+        // Reserve the full vertical outset on either side, not just one inset.
+        let verticalOutset = max(0, footerInsets.map { $0.top + $0.bottom }.max() ?? 0)
+        buttons.edgeInsets = NSEdgeInsets(top: verticalOutset,
+                                         left: max(0, footerInsets.map { $0.left }.max() ?? 0),
+                                         bottom: verticalOutset,
+                                         right: max(0, footerInsets.map { $0.right }.max() ?? 0))
         for child in form.arrangedSubviews { child.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true }
-        replaceContent(scroll(form), heading: expectedRevision == 0 ? "新建预算" : "编辑预算", subtitle: "保存后开始监测 · 草稿仅保存在本机", buttons: [])
+        let submission = budgetStack(spacing: 6)
+        if expectedRevision > 0 {
+            submission.addArrangedSubview(check("recalculateCurrent", "立即应用并重算本期", false))
+            submission.addArrangedSubview(budgetText("时间、范围或价格默认下期生效；勾选后本期重算，可能立即达到提醒线。", 11, color: .secondaryLabelColor))
+        } else { submission.addArrangedSubview(budgetText("保存后按所选周期生效；取消不会创建预算。", 11, color: .secondaryLabelColor)) }
+        let editor = budgetStack([scroll(form), submission, error, buttons], spacing: 10)
+        for child in editor.arrangedSubviews { child.widthAnchor.constraint(equalTo: editor.widthAnchor).isActive = true }
+        replaceContent(editor, heading: expectedRevision == 0 ? "新建预算" : "编辑预算", subtitle: "保存后生效 · 草稿仅保存在本机", buttons: [])
         message.stringValue = "预算范围独立于用量页面筛选。"
         refreshChoices(); updateEditorVisibility(); actionHandler("requestChoices", [:]); actionHandler("viewing", ["id": editingRule["id"] ?? "", "editing": true]); draftChanged()
     }
@@ -611,6 +806,8 @@ final class BudgetPage: NSView {
         if enabled { updateEditorVisibility() }
     }
     private func finishEditing(message text: String) {
+        saveDeadline?.cancel(); saveDeadline = nil; pendingRequestID = nil
+        if let id = editingRule["id"] as? String { drafts[id] = nil }
         editing = false; pendingSave = false; editingRule = [:]; expectedRevision = 0
         message.stringValue = text; showList(); actionHandler("draftChanged", [:])
         actionHandler("viewing", ["id": selectedBudgetID ?? "", "editing": false])
@@ -618,20 +815,33 @@ final class BudgetPage: NSView {
     }
     private func save() {
         guard editing, !pendingSave else { return }
-        window?.makeFirstResponder(nil)
+        guard window?.makeFirstResponder(nil) != false else {
+            errorText?.stringValue = "当前输入尚未通过校验，请修正后再保存。"; return
+        }
         do {
             let rule = try validatedRule()
             pendingPin = (controls["pin"] as? NSButton)?.state == .on
             pendingSave = true; setEditorEnabled(false); errorText?.stringValue = ""
+            let ticket = UUID().uuidString; pendingRequestID = ticket
+            let id = rule["id"] as? String ?? ""
+            let timeout = DispatchWorkItem { [weak self] in
+                self?.acknowledgeSave(id: id, revision: nil, error: "尚未收到保存确认，草稿已保留。请刷新预算核对结果后重试；冲突时可另存。", requestID: ticket)
+            }
+            saveDeadline?.cancel(); saveDeadline = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
             actionHandler("save", ["rule": rule, "expectedRevision": expectedRevision,
-                "recalculateCurrent": (controls["recalculateCurrent"] as? NSButton)?.state == .on])
+                "requestID": ticket, "recalculateCurrent": (controls["recalculateCurrent"] as? NSButton)?.state == .on])
         } catch { errorText?.stringValue = error.localizedDescription }
     }
     private struct Invalid: LocalizedError { let message: String; var errorDescription: String? { message } }
     private func validatedRule() throws -> BudgetObject {
         func fail(_ value: String) -> Invalid { Invalid(message: value) }
         func number(_ key: String, minimum: Double, maximum: Double = Double.greatestFiniteMagnitude, integer: Bool = false) throws -> Double {
-            guard let value = Double(text(key)), value.isFinite, value >= minimum, value <= maximum, !integer || value.rounded() == value else { throw fail("请检查 \(key) 的有效范围。") }
+            let raw = (controls[key] as? NSPopUpButton)?.selectedItem?.representedObject as? String ?? text(key)
+            guard let value = Double(raw), value.isFinite, value >= minimum, value <= maximum, !integer || value.rounded() == value else {
+                let label = controls[key]?.accessibilityLabel() ?? "数值"
+                throw fail("请检查「\(label)」的有效范围。")
+            }
             return value
         }
         let name = text("name"), kind = selected("kind"), type = selected("period")
@@ -678,7 +888,11 @@ final class BudgetPage: NSView {
         result["thresholds"] = levels; result["tokenMetric"] = selected("tokenMetric")
         result["model"] = kind == "quota" ? "all" : selected("model"); result["task"] = kind == "quota" ? "all" : selected("task")
         result["enabled"] = (controls["enabled"] as? NSButton)?.state == .on
-        if kind == "quota" { result["quotaCondition"] = "floor"; result["windowMinutes"] = try number("windowMinutes", minimum: 1, maximum: 525600, integer: true) }
+        if kind == "quota" {
+            let minutes = try number("windowMinutes", minimum: 1, maximum: 525600, integer: true)
+            guard quotaWindowOptions().contains(where: { $0.0 == String(Int(minutes)) }) else { throw fail("所选官方额度窗口当前不存在，请更新额度后选择；原草稿已保留。") }
+            result["quotaCondition"] = "floor"; result["windowMinutes"] = minutes
+        }
         if kind == "money" {
             result["currency"] = selected("currency"); result["fx"] = try number("fx", minimum: Double.leastNonzeroMagnitude, maximum: 1_000_000)
             var prices: [BudgetObject] = [], seen = Set<String>()
@@ -705,12 +919,13 @@ extension BudgetPage: NSMenuDelegate {
         trackingMenus.remove(ObjectIdentifier(menu))
         if deferredChoices {
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.editing else { return }; self.refreshChoices()
+                guard let self = self, self.editing else { return }; self.refreshChoices(); self.refreshQuotaWindows()
             }
         }
     }
 }
-extension BudgetPage: NSTextFieldDelegate {
+extension BudgetPage: NSComboBoxDelegate {
+    func comboBoxSelectionDidChange(_ notification: Notification) { updateEditorVisibility(); draftChanged() }
     func controlTextDidChange(_ obj: Notification) {
         if let field = obj.object as? NSTextField, field.identifier?.rawValue == "timezone" { updateEditorVisibility() }
         draftChanged()

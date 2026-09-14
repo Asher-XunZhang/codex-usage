@@ -50,6 +50,7 @@ func check(_ value: @autoclosure () -> Bool, _ why: String) { precondition(value
 func drain() { RunLoop.main.run(until: Date().addingTimeInterval(0.03)) }
 ''' + numbers + r'''
 final class FakeStatusButton {
+    var toolTip: String?
     enum Position { case noImage, imageLeading }
     var title = "", image: NSImage?, font: NSFont?, imagePosition = Position.noImage
     var target: AnyObject?, action: Selector?
@@ -89,6 +90,8 @@ final class FakeButton { var title = "" }
 final class FakeRequest { var cancelled = false; func cancel() { cancelled = true } }
 final class FakeSession { func invalidateAndCancel() {} }
 final class FakeAnimation { func stop() {} }
+final class FakeDocking { func prepareToHide() {} }
+final class FakePopover { func performClose(_ sender: Any?) {} }
 final class FakeWorker {
     let snapshot = (capsuleCompact: "周余 42%", detail: "合成额度")
     var stopCount = 0, url: URL? = URL(string: "http://127.0.0.1:1234")
@@ -98,15 +101,25 @@ final class FakeWorker {
 }
 final class FakeCoordinator {
     var mainIsRunning = false, shows = 0, closes = 0, stops = 0
-    var sent: [String] = [], completions: [() -> Void] = []
+    var sent: [String] = [], completions: [(Bool) -> Void] = []
     func showMain() { shows += 1 }
-    func closeMain(completion: (() -> Void)? = nil) { closes += 1; if let done = completion { completions.append(done) } }
+    func closeMain(completion: ((Bool) -> Void)? = nil) { closes += 1; if !mainIsRunning { completion?(true) } else if let done = completion { completions.append(done) } }
     func sendToHost(_ action: String, payload: Object) { sent.append(action) }
     func stop() { stops += 1 }
-    func finishClose() { mainIsRunning = false; let work = completions; completions = []; work.forEach { $0() } }
+    func finishClose(success: Bool = true) { mainIsRunning = !success; let work = completions; completions = []; work.forEach { $0(success) } }
 }
 ''' + termination + r'''
 final class Fixture: NSObject {
+    func updateStatusDetail() {}
+    var floatPlacement: NSRect?, floatLastFrame: NSRect?
+    var floatDocking: FakeDocking?
+    var notificationRouter: FakeAnimation?, taskMonitor: FakeAnimation?
+    var appearanceObservation: NSObject?
+    var backendScanDeadline: DispatchWorkItem?
+    var statusPopover: FakePopover?
+    var waitingForMainClose = false, allowClose = true
+    var mainWindowIntent = 0
+    func prepareMainClose() -> Bool { allowClose }
     func stopBudgetClients() {}
     var savedMainFrames = 0
     func saveMainWindowFrame() { savedMainFrames += 1 }
@@ -175,7 +188,9 @@ case "independent-windows":
         let host = fresh(floating: visible), item = host.statusItem!, panel = host.floating!
         host.mainWindowOpen = true; host.windowProcesses.mainIsRunning = true
         host.hideDashboard()
-        check(host.windowProcesses.closes == 1 && !host.mainWindowOpen, "Hiding Main only requests helper close")
+        check(host.windowProcesses.closes == 1 && host.mainWindowOpen, "Hiding Main waits for confirmation")
+        host.windowProcesses.finishClose()
+        check(!host.mainWindowOpen, "Confirmed close updates window state")
         check(host.floating === panel && panel.isVisible == visible && preferences.bool(forKey: "floatingVisible") == visible, "Main close preserves the floating instance and visibility")
         check(host.collector.stopCount == 0 && host.quotaReader.stopCount == 0, "Main close does not stop host data or quota collection")
         stable(host, item)
@@ -207,9 +222,9 @@ case "open-close-race":
 case "exclusive":
     let host = fresh(), item = host.statusItem!
     host.mainWindowOpen = true; host.onlyFloating()
-    check(host.floating?.isVisible == true && host.windowProcesses.closes == 1 && preferences.string(forKey: "displayMode") == "floating", "Only-float explicitly closes Main")
+    check(host.floating?.isVisible == true && host.windowProcesses.closes == 0 && host.mainWindowOpen && !item.isVisible, "Only-float changes resident entries without closing Main")
     host.onlyStatusBar()
-    check(host.floating == nil && host.windowProcesses.closes == 2 && preferences.string(forKey: "displayMode") == "menu", "Only-menu explicitly removes float and closes Main")
+    check(host.floating == nil && host.windowProcesses.closes == 0 && host.mainWindowOpen && item.isVisible, "Only-menu removes float while preserving Main")
     stable(host, item)
     let helper = fresh(helper: true), main = helper.window!
     helper.onlyStatusBar(); helper.onlyFloating(); helper.closeFloating()
@@ -218,7 +233,7 @@ case "exclusive":
 case "helper-hide":
     let helper = fresh(helper: true), main = helper.window!
     helper.hideDashboard()
-    check(!main.isVisible && NSApp.terminations == 1 && helper.windowProcesses.sent.isEmpty, "Main hide exits only this helper")
+    check(main.isVisible && NSApp.terminations == 1 && helper.windowProcesses.sent.isEmpty, "Main hide requests termination before hiding, allowing save refusal")
     let hidden = fresh(helper: true); hidden.applicationDidHide(Notification(name: Notification.Name("hidden")))
     check(NSApp.terminations == 1, "Dock/system hide releases the helper like the shortcut")
     let closing = fresh(helper: true), old = closing.window!
@@ -230,12 +245,17 @@ case "helper-hide":
 case "quit":
     let host = fresh(), item = host.statusItem!
     host.mainWindowOpen = true; host.windowProcesses.mainIsRunning = true
-    check(host.applicationShouldTerminate(NSApp) == .terminateCancel && host.terminating, "Quit asynchronously waits for owned processes")
-    check(host.windowProcesses.closes == 1 && host.collector.stopCount == 1 && host.quotaReader.stopCount == 1 && host.backend.stopCount == 1, "Host Quit requests all owned processes to close")
-    host.collector.finishStops(); host.quotaReader.finishStops(); host.backend.finishStops(); drain()
-    check(NSApp.terminations == 0 && host.windowProcesses.stops == 0, "Host observes helper termination until it has really closed")
+    check(host.applicationShouldTerminate(NSApp) == .terminateCancel && !host.terminating, "Host waits for Main save confirmation before cleanup")
+    check(host.windowProcesses.closes == 1 && host.collector.stopCount == 0, "Host remains usable while Main can refuse close")
+    host.windowProcesses.finishClose(success: false); drain()
+    check(!host.terminating && !host.waitingForMainClose && NSApp.terminations == 0, "A rejected close leaves host usable")
+    _ = host.applicationShouldTerminate(NSApp)
     host.windowProcesses.finishClose(); drain()
-    check(NSApp.terminations == 1 && host.windowProcesses.stops == 1 && host.statusItem === item, "Completed cleanup resumes termination once")
+    check(NSApp.terminations == 1, "Confirmed Main close requests host termination again")
+    _ = host.applicationShouldTerminate(NSApp)
+    check(host.terminating && host.collector.stopCount == 1 && host.quotaReader.stopCount == 1 && host.backend.stopCount == 1, "Confirmed Quit cleans owned processes")
+    host.collector.finishStops(); host.quotaReader.finishStops(); host.backend.finishStops(); drain()
+    check(NSApp.terminations == 2 && host.windowProcesses.stops == 1 && host.statusItem === item, "Completed cleanup resumes termination")
     check(host.applicationShouldTerminate(NSApp) == .terminateNow, "Resumed Quit is idempotent")
     let helper = fresh(helper: true)
     check(helper.applicationShouldTerminate(NSApp) == .terminateCancel, "Helper close waits for its Python worker")

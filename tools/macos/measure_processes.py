@@ -2,7 +2,7 @@
 """Sample an already-running macOS app and its related processes without UI actions.
 
 Reports observed physical-footprint samples, not a guaranteed lifetime peak.
-CPU is deliberately omitted: no Mach-timebase conversion is applied to rusage.
+CPU and I/O deltas cover only the observed lifetime of each process identity.
 """
 import argparse
 import ctypes
@@ -29,6 +29,67 @@ class Usage(ctypes.Structure):
             'child_system_time', 'child_pkg_idle_wkups', 'child_interrupt_wkups',
             'child_pageins', 'child_elapsed_abstime', 'diskio_bytesread',
             'diskio_byteswritten')]
+
+
+class Timebase(ctypes.Structure):
+    _fields_ = [('numer', ctypes.c_uint32), ('denom', ctypes.c_uint32)]
+
+
+class FDInfo(ctypes.Structure):
+    _fields_ = [('fd', ctypes.c_int32), ('type', ctypes.c_uint32)]
+
+
+COUNTERS = ('user_time', 'system_time', 'pkg_idle_wkups', 'interrupt_wkups',
+            'diskio_bytesread', 'diskio_byteswritten')
+
+
+def mach_timebase():
+    library = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    library.mach_timebase_info.argtypes = [ctypes.POINTER(Timebase)]
+    library.mach_timebase_info.restype = ctypes.c_int
+    value = Timebase()
+    if library.mach_timebase_info(ctypes.byref(value)) != 0 or not value.denom:
+        raise RuntimeError('Mach timebase is unavailable; CPU conversion is unsafe.')
+    return value.numer, value.denom
+
+
+def read_fd_count(library, pid):
+    library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                    ctypes.c_void_p, ctypes.c_int]
+    library.proc_pidinfo.restype = ctypes.c_int
+    size = library.proc_pidinfo(pid, 1, 0, None, 0)  # PROC_PIDLISTFDS
+    if size <= 0:
+        return None
+    for _ in range(4):
+        size += 32 * ctypes.sizeof(FDInfo)
+        if size > 16 * MIB:
+            return None
+        buffer = ctypes.create_string_buffer(size)
+        used = library.proc_pidinfo(pid, 1, 0, buffer, size)
+        if used <= 0 or used % ctypes.sizeof(FDInfo):
+            return None
+        if used < size:
+            return used // ctypes.sizeof(FDInfo)
+        size *= 2
+    return None
+
+
+def counter_summary(samples, timebase):
+    # Never merge a recycled PID, or add ri_child_* to separately observed
+    # descendants. First-to-last deltas exclude work before first observation.
+    histories = {}
+    for sample in samples:
+        for pid, value in sample['process_counters'].items():
+            histories.setdefault((pid, value['start_abstime']), []).append(value)
+    rows = []
+    for (pid, identity), values in histories.items():
+        valid = all(b[key] >= a[key] for a, b in zip(values, values[1:]) for key in COUNTERS)
+        delta = {key: values[-1][key] - values[0][key] for key in COUNTERS} if valid else None
+        rows.append({'pid': pid, 'start_abstime': identity, 'observations': len(values),
+                     'valid': valid, 'delta': delta,
+                     'cpu_seconds': ((delta['user_time'] + delta['system_time']) * timebase[0]
+                                     / timebase[1] / 1e9) if valid else None})
+    return rows
 
 
 def process_table():
@@ -80,6 +141,7 @@ def measure(app, duration, interval):
     library = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
     library.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
     library.proc_pid_rusage.restype = ctypes.c_int
+    timebase = mach_timebase()
     host_path = str(app / 'Contents/MacOS/CodexUsage')
     main_path = str(app / 'Contents/Helpers/CodexUsageMain.app/Contents/MacOS/CodexUsage')
     gui_paths = {host_path: 'host', main_path: 'main'}
@@ -119,6 +181,8 @@ def measure(app, duration, interval):
         # recycled PIDs using their kernel process-start identity.
         known = set(tracked)
         measured = {}
+        counters = {}
+        fds = {}
         unreadable = []
         for pid in sorted(current | known):
             usage = read_usage(library, pid)
@@ -135,6 +199,8 @@ def measure(app, duration, interval):
                 issues.add('gui_process_identity_changed')
             tracked[pid] = identity
             measured[pid] = usage.phys_footprint
+            counters[str(pid)] = dict(start_abstime=identity, **{key: getattr(usage, key) for key in COUNTERS})
+            fds[str(pid)] = read_fd_count(library, pid)
         if any(pid not in measured for pid in initial_guis):
             issues.add('initial_gui_unreadable_or_exited')
         host_pids = [pid for pid, role in guis.items() if role == 'host']
@@ -148,6 +214,8 @@ def measure(app, duration, interval):
             'process_mib': {str(pid): value / MIB for pid, value in measured.items()},
             'related_pids': related,
             'unreadable_current_pids': unreadable,
+            'process_counters': counters,
+            'process_fd_count': fds,
         })
         if time.monotonic() - began >= duration:
             break
@@ -166,6 +234,13 @@ def measure(app, duration, interval):
     hosts = [sample['host_mib'] for sample in samples if sample['host_mib'] is not None]
     idle = [sample['host_mib'] for sample in samples
             if sample['host_mib'] is not None and not sample['related_pids']]
+    counter_rows = counter_summary(samples, timebase)
+    if any(not row['valid'] for row in counter_rows):
+        issues.add('resource_counter_regressed')
+    span = samples[-1]['seconds'] - samples[0]['seconds']
+    host_ids = {str(pid) for pid, role in initial_guis.items() if role == 'host'}
+    host_cpu = sum(row['cpu_seconds'] or 0 for row in counter_rows if row['pid'] in host_ids)
+    counter_valid = all(row['valid'] for row in counter_rows)
     result = {
         'valid': not issues,
         'invalid_reasons': sorted(issues),
@@ -188,13 +263,25 @@ def measure(app, duration, interval):
         'observed_related_pids': sorted({pid for s in samples for pid in s['related_pids']}),
         'sampled_host_only_percent': round(len(idle) / len(samples) * 100, 1),
         'memory_metric': 'proc_pid_rusage RUSAGE_INFO_V2 ri_phys_footprint / 2^20',
-        'cpu_reported': False,
+        'cpu_reported': counter_valid,
+        'mach_timebase_numer_denom': list(timebase),
+        'observed_process_counter_deltas': counter_rows,
+        'host_cpu_seconds': host_cpu if counter_valid else None,
+        'host_cpu_percent_one_core': host_cpu / span * 100 if counter_valid and span > 0 else None,
+        'observed_combined_cpu_seconds': sum(row['cpu_seconds'] for row in counter_rows) if counter_valid else None,
+        'fd_samples_complete': all(value is not None for sample in samples for value in sample['process_fd_count'].values()),
+        'observed_fd_peak': max((sum(sample['process_fd_count'].values()) for sample in samples
+                                 if all(value is not None for value in sample['process_fd_count'].values())), default=None),
         'limitations': [
             'Sampled observations can miss short-lived processes, PID changes and peaks between samples.',
             'Mode and refresh preferences are compared only at the beginning and end.',
             'Process discovery and rusage reads are not atomic; unreadable observed processes invalidate the run.',
             'The profiler itself and operating-system shared services are excluded.',
-            'CPU is omitted; rusage counters are not converted using a Mach timebase.',
+            'CPU uses Mach timebase conversion; 100% means one fully occupied CPU core.',
+            'Counter deltas omit work before first and after last observation, including missed short-lived processes.',
+            'Wakeup counters are kernel task-attributed events, not total machine wakeups or an energy measurement.',
+            'Disk I/O counters do not include cached logical reads; zero may also mean unavailable kernel I/O accounting.',
+            'FD counts are non-atomic observations and exclude Mach ports; unreadable FD lists are null, not zero.',
         ],
     }
     return result, samples

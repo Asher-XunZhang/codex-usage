@@ -95,7 +95,16 @@ def verify_app(root, arch):
     require(manifest == selected_entries(source_manifest, arch), 'Packaged runtime manifest does not match pinned source')
     require({p.name for p in (resources / 'runtimes').iterdir()} == {'manifest.json', manifest[0]['file']}, 'Unexpected runtime files')
     verify_runtime(resources / 'runtimes' / manifest[0]['file'], manifest[0])
-    expected = {'AppIcon.icns', 'THIRD-PARTY.md', 'runtimes/manifest.json', 'runtimes/' + manifest[0]['file']}
+    build_info = json.loads((resources / 'BUILD-INFO.json').read_text(encoding='utf-8'))
+    require(build_info['architecture'] == arch, 'Build provenance architecture mismatch')
+    source_root = root / 'source'
+    source_paths = [p for p in (source_root / 'src').rglob('*') if p.is_file() and p.suffix in ('.swift', '.c', '.h', '.py') and '__pycache__' not in p.parts]
+    source_paths.extend([source_root / 'tools/macos/build.py', source_root / 'tools/common/paths.py'])
+    fingerprints = {str(p.relative_to(source_root)): digest_file(p) for p in sorted(source_paths)}
+    require(build_info['sources'] == fingerprints, 'Compiled source fingerprints differ from ZIP source')
+    require(build_info['sourceDigest'] == hashlib.sha256(json.dumps(fingerprints, sort_keys=True).encode()).hexdigest(),
+            'Build source digest mismatch')
+    expected = {'AppIcon.icns', 'BUILD-INFO.json', 'THIRD-PARTY.md', 'runtimes/manifest.json', 'runtimes/' + manifest[0]['file']}
     for directory, source in [('backend', root / 'source/src/backend'), ('third-party-licenses', source_resources / 'third-party-licenses')]:
         for path in source.rglob('*'):
             if path.is_file():

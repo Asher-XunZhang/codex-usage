@@ -10,6 +10,8 @@ final class BudgetStore {
     private var ledger: [[String: Any]] = []
     private let url: URL
     private var unreadable = false
+    private(set) var recoveryBackup: String?
+    var recovery: [String: Any] { ["required": unreadable, "path": url.path, "backupPath": recoveryBackup ?? ""] }
     private let deferredFields = ["kind", "tokenMetric", "model", "task", "currency", "fx", "prices", "period", "windowMinutes", "quotaCondition"]
 
     var pendingAlerts: [[String: Any]] {
@@ -83,6 +85,17 @@ final class BudgetStore {
     /// save/upsert accepts {rule, expectedRevision, recalculateCurrent}, or a rule directly.
     /// Structural and price edits take effect next cycle unless explicitly recalculated.
     func apply(action: String, payload: [String: Any], source: String, now: Date = Date()) throws {
+        if action == "recover" {
+            guard unreadable, payload["confirm"] as? Bool == true else { throw BudgetError.invalid("请先确认备份损坏的预算配置") }
+            let backup = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".damaged-" + UUID().uuidString)
+            // Copy must succeed before any replacement; the original is retained on failure.
+            try FileManager.default.copyItem(at: url, to: backup)
+            let previous = snapshot()
+            rules = []; summaries = []; runtime = [:]; ledger = []
+            do { try persist(); unreadable = false; recoveryBackup = backup.path }
+            catch { restore(previous); throw error }
+            return
+        }
         guard !unreadable else { throw BudgetError.invalid(persistenceError ?? "预算文件无法读取") }
         let before = snapshot()
         do {
@@ -387,7 +400,7 @@ final class BudgetStore {
             "periodID": period.id, "start": period.start.timeIntervalSince1970, "end": period.end.timeIntervalSince1970,
             "periodStart": period.start.timeIntervalSince1970, "periodEnd": period.end.timeIntervalSince1970,
             "model": rule["model"]!, "task": rule["task"]!, "tokenMetric": rule["tokenMetric"]!, "period": rule["period"]!,
-            "source": rule["source"]!, "windowMinutes": rule["windowMinutes"]!, "quotaFloor": rule["amount"]!,
+            "source": rule["source"]!, "windowMinutes": rule["windowMinutes"]!, "quotaFloor": rule["amount"]!, "prices": rule["prices"]!, "fx": rule["fx"]!,
             "used": NSNull(), "remaining": NSNull(), "remainingPercent": NSNull(), "remainingFraction": NSNull(),
             "overage": NSNull(), "updatedAt": NSNull(), "paused": false, "pausedUntil": NSNull()]
         invalidate(&result, status: "unknown", reason: "等待本周期数据")
@@ -408,6 +421,7 @@ final class BudgetStore {
         var complete = root["coverage_complete"] as? Bool != false
         if !(root["issues"] as? [Any] ?? []).isEmpty || !(row["issues"] as? [Any] ?? []).isEmpty { complete = false }
         var used = 0.0
+        var diagnostics: [[String: Any]] = []
         let metric = rule["tokenMetric"] as? String ?? "total", kind = rule["kind"] as? String ?? "token"
         let prices = rule["prices"] as? [[String: Any]] ?? []
         for usage in rows {
@@ -430,13 +444,23 @@ final class BudgetStore {
                     complete = complete && inputKnown && outputKnown && cachedKnown && cached <= input
                 }
             } else {
-                guard let price = prices.first(where: { $0["model"] as? String == usage["model"] as? String }) else { complete = false; continue }
+                let price = prices.first(where: { $0["model"] as? String == usage["model"] as? String }) ?? [:]
                 let (input, inputKnown) = amount("input_tokens"), (output, outputKnown) = amount("output_tokens"), (cached, cachedKnown) = amount("cached_input_tokens")
                 let (cacheWrite, cacheWriteKnown) = amount("cache_write_input_tokens")
                 let inputPrice = Self.number(price["input"]), cachedPrice = Self.number(price["cachedInput"]), outputPrice = Self.number(price["output"])
                 // Unknown cache-write classification cannot be assumed to be ordinary input.
                 let splitKnown = inputKnown && cachedKnown && cacheWriteKnown && cached <= input && cacheWrite == 0
                 let noncached = max(0, input - cached)
+                var missing: [String] = []
+                if inputPrice == nil && (noncached > 0 || !inputKnown) { missing.append("input") }
+                if cachedPrice == nil && (cached > 0 || !cachedKnown) { missing.append("cachedInput") }
+                if outputPrice == nil && (output > 0 || !outputKnown) { missing.append("output") }
+                let usageIncomplete = !inputKnown || !outputKnown || !cachedKnown || !cacheWriteKnown
+                if !missing.isEmpty || !splitKnown || usageIncomplete {
+                    diagnostics.append(["model": usage["model"] as? String ?? "未知模型", "missingPrices": missing,
+                        "cacheClassificationUnknown": !cachedKnown || !cacheWriteKnown || cached > input || cacheWrite != 0,
+                        "usageIncomplete": usageIncomplete])
+                }
                 let inputPriced = splitKnown && (noncached == 0 || inputPrice != nil) && (cached == 0 || cachedPrice != nil)
                 var inputCost = 0.0
                 if splitKnown {
@@ -457,6 +481,9 @@ final class BudgetStore {
         summary["coverage"] = complete ? "complete" : "partial"
         summary["dataStatus"] = complete ? "updated" : "partial"
         summary["estimated"] = kind == "money"
+        summary["priceDiagnostics"] = Array(diagnostics.prefix(200))
+        summary["sourceIssues"] = Array(((root["issues"] as? [String] ?? []) + (row["issues"] as? [String] ?? [])).prefix(20))
+        summary["knownAmountIsLowerBound"] = !complete
         if complete || used >= amount {
             summary["remaining"] = remaining; summary["remainingPercent"] = max(0, ratio); summary["remainingFraction"] = max(0, ratio / 100)
             let threshold = (rule["thresholds"] as? [Double] ?? [20, 10, 0]).max() ?? 20

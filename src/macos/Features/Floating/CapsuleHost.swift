@@ -1,5 +1,20 @@
 import AppKit
 
+/// Hover and mouse controls remain non-activating; an explicit keyboard action
+/// can grant this same panel key status without becoming the main app window.
+final class CapsulePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    override func sendEvent(_ event: NSEvent) {
+        // The native text field editor can own first responder. Escape still
+        // belongs to the enclosing floating panel rather than being swallowed.
+        if event.type == .keyDown, event.keyCode == 53, let host = contentView as? CapsuleHost {
+            host.surface.keyDown(with: event); return
+        }
+        super.sendEvent(event)
+    }
+}
+
 /// Both palettes share one input/drawing surface, with no material view to retain.
 final class CapsuleHost: NSView {
     let surface: CapsuleSurface

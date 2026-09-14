@@ -54,6 +54,8 @@ final class Collector {
 }
 final class State { var status = "" }
 final class Fixture {
+    func startTaskMonitoring(home: URL) {}
+    func reportLocalUpdate(busy: Bool, error: String? = nil, stamp: String? = nil) {}
     func refreshBudgets(manual: Bool) {}
     var compactMode = true, terminating = false, compactDirty = false, compactManualQueued = false, compactSelectionQueued = false
     var nativeSummaryBusy = false

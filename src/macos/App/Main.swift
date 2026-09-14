@@ -143,14 +143,24 @@ final class DashboardUI {
     var refreshButton: NSButton!
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSPopoverDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     var dashboard: DashboardUI?
     var hostFloatingVisible = false
     var mainWindowOpen = false
+    var mainWindowIntent = 0
     var hostQuotaDetail = "正在读取账号额度…"
     var hostQuotaResetLabel = "重置卡数量未知"
     var applyingHostState = false
     var budgetCoordinator: BudgetCoordinator?
+    var taskMonitor: TaskMonitorService?
+    var taskMonitorState: Object = [:]
+    var taskMonitorPage: TaskMonitorPage?
+    var notificationRouter: UsageNotificationRouter?
+    var pendingTaskMonitorRoute = false
+    var pendingTaskMonitorSection = "watches"
+    var pendingTaskMonitorMessageIDs: [String]?
+    var pendingTaskMonitorRouteID = ""
+    var pendingTaskMonitorRouteSequence = 0, handledTaskMonitorRouteSequence = 0
     var budgetState: Object = [:]
     var budgetPage: BudgetPage?
     var usagePageView: NSView?
@@ -209,9 +219,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         activeSession = created; return created
     }
     var timer: Timer?
+    var backendFallbackDelay: TimeInterval = 5
+    var backendScanDeadline: DispatchWorkItem?
     var statusItem: NSStatusItem?
     var statusMenuTracking = false
     var statusMenu: NSMenu?
+    var statusPopover: NSPopover?
     var statusSingleClick: DispatchWorkItem?
     var menuOutsideMonitor: Any?
     var menuLocalMonitor: Any?
@@ -234,11 +247,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var refreshCommand: URLSessionDataTask?
     var settingsCommand: URLSessionDataTask?
     var settingsID = 0
+    let settingsQueue = MainSettingsQueue()
+    var updateStatusController: UpdateStatusController?
+    var usageSettings: UsageSettingsController?
+    var appearanceObservation: NSKeyValueObservation?
+    var localUpdate: Object = [:]
+    var hostSettingsError = ""
     var intervalPicker: NSPopUpButton { dashboard!.intervalPicker }
     var floating: NSPanel?
     var capsule: CapsuleSurface?
     var floatAnimation: CapsuleAnimation?
     var floatAnchor: NSPoint?
+    var floatPlacement: CapsulePlacement?
+    var floatLastFrame: NSRect?
+    var floatDocking: CapsuleDocking?
     var floatExpanded = false
     var floatMovingFrame = false
     var floatResettingInteraction = false
@@ -266,8 +288,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var task = usagePreferences.string(forKey: "filterTask") ?? "all"
     var group = usagePreferences.string(forKey: "filterGroup") ?? "model"
     var snapshot: Object = [:]
+    let usageSession = MainUsageSession()
+    var usageIdentity: MainUsageIdentity {
+        MainUsageIdentity(source: codexHome.standardizedFileURL.path, cache: backend.cachePath(codexHome).path,
+                          generation: backend.generation, days: days, model: model, task: task, group: group)
+    }
+    var tableSelection: MainTableSelection {
+        MainTableSelection(search: search.stringValue, sortKey: table.sortDescriptors.first?.key ?? "total_tokens",
+                           ascending: table.sortDescriptors.first?.ascending ?? false)
+    }
     var rows: [Object] = []
     var visibleRows: [Object] = []
+    var tableRevision = 0
+    var lastTableSelection: MainTableSelection?
     var codexHome: URL {
         if let path = usagePreferences.string(forKey: "codexHome") { return URL(fileURLWithPath: path) }
         if let path = ProcessInfo.processInfo.environment["CODEX_HOME"], !path.isEmpty { return URL(fileURLWithPath: path) }
@@ -300,13 +333,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         capsuleState.loadChoices = { [weak self] kind, completion in
             self?.loadFloatingChoices(kind, completion: completion)
         }
+        applyAppAppearance()
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.applyAppAppearance() }
+        }
         installWindowBridge()
         buildMenu()
         backend.onExit = { [weak self] in self?.recover("统计进程已退出") }
+        backend.onState = { [weak self] state in
+            guard let self = self, isMainWindowProcess, !self.terminating else { return }
+            self.timer?.invalidate(); self.timer = nil; self.backendFallbackDelay = 5
+            self.handleBackendState(state)
+        }
+        backend.onEventsUnavailable = { [weak self] in self?.scheduleBackendFallback() }
         if isMainWindowProcess {
-            buildWindow(); start()
-            timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
-            timer?.tolerance = 0.1; RunLoop.main.add(timer!, forMode: .common)
+            buildWindow(); applyAppAppearance(); start()
             NSApp.activate(ignoringOtherApps: true)
             sendHost("requestState")
             handleMainRequest()
@@ -314,10 +355,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             buildStatusItem()
             startBudgets()
             quotaReader.changed = { [weak self] snapshot in self?.renderQuota(snapshot) }
+            quotaReader.setEnabled(usagePreferences.object(forKey: "quotaEnabled") as? Bool ?? true)
             quotaReader.start()
             let initialMode = usagePreferences.string(forKey: "displayMode") ?? "main"
+            let residentMode = usagePreferences.string(forKey: "residentMode")
             trayOnly = initialMode == "menu"
             if initialMode == "floating" || (initialMode == "main" && usagePreferences.bool(forKey: "floatingVisible")) { showFloating() }
+            if residentMode == "floating", floating?.isVisible == true { statusItem?.isVisible = false }
             enterCompactMode()
             if initialMode == "main" { openMainWindow() }
         }
@@ -354,6 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func openMainWindow() {
         guard !isMainWindowProcess, !terminating else { return }
+        mainWindowIntent += 1
         mainWindowOpen = true; persistHostWindowMode()
         if windowProcesses.mainIsRunning {
             windowProcesses.showMain(); publishHostState(); return
@@ -369,8 +414,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func closeMainWindow() {
         guard !isMainWindowProcess else { return }
-        mainWindowOpen = false; persistHostWindowMode()
-        windowProcesses.closeMain()
+        mainWindowIntent += 1; let intent = mainWindowIntent
+        windowProcesses.closeMain { [weak self] closed in
+            guard let self = self, self.mainWindowIntent == intent else { return }
+            self.mainWindowOpen = !closed; self.persistHostWindowMode(); self.publishHostState()
+        }
     }
     func publishHostState() {
         guard !isMainWindowProcess, !terminating else { return }
@@ -381,12 +429,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             "theme": capsuleState.theme.rawValue, "refreshSeconds": autoSeconds,
             "quotaDetail": quota.detail, "quotaResetLabel": quota.resetLabel
         ])
-        publishBudgetState()
+        publishBudgetState(); publishTaskMonitorState(); updateStatusDetail()
     }
     func receiveHostState(_ state: Object) {
         guard isMainWindowProcess, !terminating else { return }
         if let budgets = state["budgets"] as? Object { receiveBudgetState(budgets) }
+        if let monitor = state["taskMonitor"] as? Object { taskMonitorState = monitor; taskMonitorPage?.update(monitor) }
         applyingHostState = true; defer { applyingHostState = false }
+        if state["appearanceChanged"] as? Bool == true { applyAppAppearance() }
         hostFloatingVisible = state["floatingVisible"] as? Bool ?? hostFloatingVisible
         floatingButton?.title = hostFloatingVisible ? "隐藏浮窗" : "显示浮窗"
         hostQuotaDetail = state["quotaDetail"] as? String ?? hostQuotaDetail
@@ -399,7 +449,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func receiveWindowAction(_ action: String, payload: Object) {
         guard !terminating else { return }
         if receiveBudgetAction(action, payload: payload) { return }
+        if receiveTaskMonitorAction(action, payload: payload) { return }
         if isMainWindowProcess {
+            if action == "retrySettings" { retrySettings(); return }
             if action == "close" { hideDashboard() }
             else if action == "refresh" {
                 if let id = payload["requestID"] as? String { helperRefreshIDs.insert(id) }
@@ -407,19 +459,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 if backend.url == nil || backend.starting || restarting {
                     helperRefreshQueued = true
                     if !backend.starting && !backend.stopping && !restarting { start() }
-                } else { manualRefresh() }
+                } else { refreshLocal() }
             }
             else if action == "focus" { showDashboard(); handleMainRequest() }
             return
         }
         usagePreferences.synchronize()
         switch action {
+        case "settingsWindow": showSettingsPage(payload["page"] as? String ?? "appearance")
+        case "updateStatus": showUpdateStatus()
+        case "localUpdate":
+            guard payload["source"] as? String == codexHome.standardizedFileURL.path else { return }
+            localUpdate = payload; updateRefreshStatus()
+        case "settingsResult": hostSettingsError = payload["error"] as? String ?? ""; updateRefreshStatus()
         case "requestState", "helperReady":
             mainWindowOpen = true; persistHostWindowMode()
             if hostRefreshID == nil { finishRefreshing() }
             collector.stop { [weak self] in
                 guard let self = self, !self.terminating else { return }
-                self.publishHostState(); self.sendBudgetRoute(); self.compactSelectionQueued = true; self.fetchCompact(manual: false)
+                self.publishHostState(); self.sendBudgetRoute(); self.sendTaskMonitorRoute(); self.compactSelectionQueued = true; self.fetchCompact(manual: false)
                 if let id = self.hostRefreshID {
                     self.windowProcesses.sendToMain("refresh", payload: ["requestID": id])
                 }
@@ -444,6 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                     message: payload["message"] as? String ?? "刷新已结束")
             }
         case "homeChanged":
+            localUpdate = [:]; updateRefreshStatus()
             budgetSourceChanged()
             stopCompactMonitoring(); compactMode = false; enterCompactMode()
         case "quit": quitApplication()
@@ -476,12 +535,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard !isMainWindowProcess, hostRefreshID == id else { return }
         hostRefreshID = nil; hostRefreshDeadline?.cancel(); hostRefreshDeadline = nil
         finishRefreshing(); capsuleState.status = message
+        reportLocalUpdate(busy: false, error: success ? nil : message)
         if success { compactSelectionQueued = true; fetchCompact(manual: false) }
     }
     func reportHelperRefresh(success: Bool, message: String) {
+        reportLocalUpdate(busy: false, error: success ? nil : message, stamp: success ? manualExpectedStamp : nil)
         guard isMainWindowProcess else { return }
         let ids = helperRefreshIDs; helperRefreshIDs = []; helperRefreshQueued = false
         for id in ids { sendHost("refreshResult", payload: ["requestID": id, "success": success, "message": message]) }
+    }
+    func reportLocalUpdate(busy: Bool, error: String? = nil, stamp: String? = nil) {
+        let source = codexHome.standardizedFileURL.path
+        var next = localUpdate["source"] as? String == source ? localUpdate : [:]
+        next["source"] = source; next["busy"] = busy; next["error"] = error
+        if let stamp = stamp { next["stamp"] = stamp }
+        guard !NSDictionary(dictionary: next).isEqual(to: localUpdate) else { return }
+        localUpdate = next
+        if isMainWindowProcess { sendHost("localUpdate", payload: next) }
+        else { updateRefreshStatus() }
+    }
+    func updateRefreshStatus() {
+        updateStatusController?.update(local: localUpdate, quota: quotaReader.snapshot, enabled: quotaReader.enabled,
+            busy: quotaReader.isRefreshing, seconds: autoSeconds, settingsError: hostSettingsError)
+    }
+    @objc func showUpdateStatus() { showSettingsPage("data") }
+    func ensureUpdateStatus() {
+        guard !isMainWindowProcess else { return }
+        if updateStatusController == nil {
+            let controller = UpdateStatusController(embedded: true); updateStatusController = controller
+            controller.action = { [weak self] action, value in
+                guard let self = self else { return }
+                switch action {
+                case "local": self.refreshLocal()
+                case "quota": self.quotaReader.refresh(force: true)
+                case "quotaEnabled":
+                    usagePreferences.set(value == 1, forKey: "quotaEnabled"); self.quotaReader.setEnabled(value == 1)
+                case "interval": self.applyInterval(value)
+                case "settings": self.windowProcesses.sendToMain("retrySettings")
+                default: break
+                }
+                self.updateRefreshStatus()
+            }
+        }
+        updateRefreshStatus()
     }
     func buildMenu() {
         let main = NSMenu()
@@ -489,7 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let appMenu = NSMenu(); appItem.submenu = appMenu
         appMenu.addItem(withTitle: "关于 Codex 用量", action: #selector(about), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "选择 Codex 数据文件夹…", action: #selector(chooseHome), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "选择 Codex 数据文件夹…", action: #selector(chooseHome), keyEquivalent: "")
         appMenu.addItem(withTitle: "打开支持文件夹", action: #selector(showSupport), keyEquivalent: "")
         appMenu.addItem(capsuleThemeMenuItem())
         appMenu.addItem(.separator())
@@ -498,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let fileItem = NSMenuItem(); main.addItem(fileItem)
         let file = NSMenu(title: "文件"); fileItem.submenu = file
         file.addItem(withTitle: "刷新", action: #selector(manualRefresh), keyEquivalent: "r")
+        file.addItem(withTitle: "数据与更新…", action: #selector(showUpdateStatus), keyEquivalent: "")
         file.addItem(withTitle: "导出 CSV…", action: #selector(exportCSV), keyEquivalent: "e")
         file.addItem(withTitle: "重启统计", action: #selector(restart), keyEquivalent: "")
         file.addItem(.separator())
@@ -532,7 +630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func applyCapsuleTheme(_ theme: CapsuleTheme) {
         capsuleState.theme = theme
-        usagePreferences.set(theme.rawValue, forKey: "capsuleTheme")
+        if !applyingHostState { usagePreferences.set(theme.rawValue, forKey: "capsuleTheme"); usagePreferences.set(theme.rawValue, forKey: "appearanceFloating") }
         updateCapsuleThemeChecks(NSApp.mainMenu); updateCapsuleThemeChecks(statusMenu)
         if isMainWindowProcess {
             if !applyingHostState { sendHost("theme", payload: ["value": theme.rawValue]) }
@@ -581,7 +679,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refreshButton?.bezelStyle = .rounded
         exportButton = FeedbackButton(title: "导出 CSV…", target: self, action: #selector(exportCSV)); exportButton?.bezelStyle = .rounded
         exportButton?.isEnabled = false
-        let filters = stack([period, models, tasks, spacer(), refreshButton, exportButton], spacing: 8)
+        let reset = FeedbackButton(title: "重置筛选", target: self, action: #selector(resetMainFilters)); reset.bezelStyle = .rounded
+        let filters = stack([period, models, tasks, reset, spacer(), refreshButton], spacing: 8)
         let cards = stack([totalCard, inputCard, outputCard, cacheCard, callsCard])
         cards.distribution = .fillEqually
         let chartPanel = Panel()
@@ -600,7 +699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         search.placeholderString = "搜索明细"; search.delegate = self; search.sendsSearchStringImmediately = true
         search.setAccessibilityLabel("搜索明细")
         search.widthAnchor.constraint(equalToConstant: 200).isActive = true
-        let detailHeader = stack([label("用量明细", 14, .semibold), grouping, rowCount, spacer(), search])
+        let detailHeader = stack([label("用量明细", 14, .semibold), grouping, rowCount, spacer(), search, exportButton])
         table.dataSource = self; table.delegate = self
         table.usesAlternatingRowBackgroundColors = true; table.rowHeight = 32
         table.style = .inset; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
@@ -644,12 +743,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         capsuleState.quotaDetail = snapshot.compact
         budgetCoordinator?.updateQuota(snapshot)
         updateStatusTitle()
+        updateRefreshStatus()
         publishHostState()
     }
     func updateStatusTitle() {
+        updateStatusDetail()
         guard !isMainWindowProcess else { return }
         let summary = todaySnapshot["summary"] as? Object ?? [:]
         statusItem?.button?.title = " \(compact(summary["total_tokens"])) · \(quotaReader.snapshot.capsuleCompact)"
+        statusItem?.button?.toolTip = "今日 \(exact(summary["total_tokens"])) Token · \(quotaReader.snapshot.capsuleCompact)\n单击查看详情，双击打开主面板，右键打开菜单"
     }
     func start() {
         guard isMainWindowProcess, !terminating, !compactMode, dashboard != nil else { return }
@@ -661,7 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             switch result {
             case .success:
                 self.failures = 0; self.applyInterval(self.autoSeconds, refreshAfterChange: false); self.poll()
-                if self.helperRefreshQueued { self.helperRefreshQueued = false; self.manualRefresh() }
+                if self.helperRefreshQueued { self.helperRefreshQueued = false; self.refreshLocal() }
             case .failure(let error):
                 self.reportHelperRefresh(success: false, message: "主面板统计启动失败")
                 self.refreshButton?.title = "刷新"; self.refreshButton?.isEnabled = true
@@ -693,48 +795,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                       numeric(json["pid"]) == Double(expectedPID), (response as? HTTPURLResponse)?.statusCode == 200 else {
                     self.failures += 1; self.statusText = "连接恢复中（\(self.failures)/3）…"
                     if self.failures >= 3 { self.recover("统计暂时无响应") }
+                    else if self.backend.eventsAvailable {
+                        let work = DispatchWorkItem { [weak self] in self?.poll(force: true) }
+                        self.backendScanDeadline?.cancel(); self.backendScanDeadline = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+                    }
                     self.capsuleState.status = self.statusText
                     return
                 }
-                if let ticket = self.pendingRefresh {
-                    self.statusText = "正在重新读取日志…"
-                    self.capsuleState.status = "正在刷新…"
+                self.handleBackendState(json)
+            }
+        }
+        request?.resume()
+    }
+    func scheduleBackendFallback() {
+        guard isMainWindowProcess, !terminating, !backend.eventsAvailable, timer == nil else { return }
+        statusText = "更新通知暂不可用，正在退避核对"
+        timer = Timer(timeInterval: backendFallbackDelay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.timer = nil; self.poll(force: true)
+            self.backendFallbackDelay = min(60, self.backendFallbackDelay * 2); self.scheduleBackendFallback()
+        }
+        timer?.tolerance = min(5, backendFallbackDelay / 5)
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+    func handleBackendState(_ json: Object) {
+        guard !terminating, !restarting else { return }
+        backendScanDeadline?.cancel(); backendScanDeadline = nil
+        if json["scanning"] as? Bool == true {
+            let generation = backend.generation
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, self.backend.generation == generation else { return }
+                self.backendScanDeadline = nil; self.poll(force: true)
+            }
+            backendScanDeadline = work; DispatchQueue.main.asyncAfter(deadline: .now() + 120, execute: work)
+        }
+                if let ticket = pendingRefresh {
+                    statusText = "正在重新读取日志…"
+                    capsuleState.status = "正在刷新…"
                     if ticket >= 0 && Int(numeric(json["refresh_completed"]) ?? -1) >= ticket {
-                        self.manualExpectedStamp = json["generated_at"] as? String
-                        self.finishRefreshing()
+                        manualExpectedStamp = json["generated_at"] as? String
+                        finishRefreshing()
                         if let error = json["refresh_error"] as? String {
-                            self.reportHelperRefresh(success: false, message: error)
-                            self.manualBeganAt = nil; self.manualExpectedStamp = nil
-                            self.statusText = error; self.capsuleState.status = "刷新失败 · 保留旧快照"
+                            reportHelperRefresh(success: false, message: error)
+                            manualBeganAt = nil; manualExpectedStamp = nil
+                            statusText = error; capsuleState.status = "刷新失败 · 保留旧快照"
                             return
                         }
-                        self.refreshVisibleData(); return
+                        refreshVisibleData(); return
                     }
-                    if let began = self.refreshStarted, Date().timeIntervalSince(began) > 120 {
-                        self.finishRefreshing()
-                        self.manualBeganAt = nil; self.manualExpectedStamp = nil
-                        self.statusText = "扫描耗时较长，仍在后台进行"
-                        self.reportHelperRefresh(success: false, message: self.statusText)
+                    if let began = refreshStarted, Date().timeIntervalSince(began) > 120 {
+                        finishRefreshing()
+                        manualBeganAt = nil; manualExpectedStamp = nil
+                        statusText = "扫描耗时较长，仍在后台进行"
+                        reportHelperRefresh(success: false, message: statusText)
                     }
                     return
                 }
                 if json["ready"] as? Bool != true {
-                    self.failures = 0
-                    self.statusText = "正在索引本机记录…"
-                    self.capsuleState.status = self.statusText
+                    failures = 0
+                    statusText = "正在索引本机记录…"
+                    capsuleState.status = statusText
                     return
                 }
-                self.failures = 0
+                failures = 0
                 if let error = json["refresh_error"] as? String {
-                    self.reportHelperRefresh(success: false, message: error)
-                    self.statusText = error; self.capsuleState.status = "读取失败 · 保留旧快照"
+                    reportHelperRefresh(success: false, message: error)
+                    statusText = error; capsuleState.status = "读取失败 · 保留旧快照"
                     return
                 }
-                let previous = self.mainVisible ? (self.snapshot["meta"] as? Object)?["generated_at"] as? String : self.compactStamp
-                if previous == nil || json["generated_at"] as? String != previous { self.refreshVisibleData() }
-            }
-        }
-        request?.resume()
+                reportLocalUpdate(busy: json["scanning"] as? Bool == true, stamp: json["generated_at"] as? String)
+                let previous = mainVisible ? (snapshot["meta"] as? Object)?["generated_at"] as? String : compactStamp
+                if mainVisible && usageSession.needsRead || previous == nil || json["generated_at"] as? String != previous { refreshVisibleData() }
     }
     func endpoint(_ path: String) -> URL? {
         guard let base = backend.url else { return nil }
@@ -744,27 +876,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func loadUsage() {
         guard mainVisible else { loadCompact(); return }
+        let identity = usageIdentity
+        if usageSession.select(identity) { clearUsageDisplay() }
         guard let url = endpoint("api/usage"), !terminating else { return }
         requestID += 1; let id = requestID; let generation = backend.generation
         request?.cancel()
         request = session.dataTask(with: url) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                guard let self = self, self.requestID == id, self.backend.generation == generation, !self.terminating else { return }
+                guard let self = self, self.requestID == id, self.backend.generation == generation,
+                      self.usageIdentity == identity, !self.terminating else { return }
                 self.request = nil
                 if (response as? HTTPURLResponse)?.statusCode == 400 {
-                    self.model = "all"; self.task = "all"
-                    self.statusText = "原筛选已不可用，显示全部记录"
-                    self.loadUsage(); return
+                    self.usageSession.failed(); self.exportButton?.isEnabled = false
+                    self.statusText = "所选范围不可用，请调整或重置筛选"; return
                 }
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? Object,
                       json["summary"] is Object, json["meta"] is Object else {
                     self.failures += 1; self.statusText = "读取暂时失败，正在重试…"
+                    self.usageSession.failed(); self.exportButton?.isEnabled = false
                     if self.failures >= 3 { self.recover("用量读取失败") }
                     return
                 }
                 self.failures = 0
-                if self.mainVisible { self.snapshot = json; self.render(json) } else { self.loadCompact() }
+                if self.mainVisible, self.usageSession.publish(json, for: identity) { self.snapshot = json; self.render(json) } else { self.loadCompact() }
             }
         }
         request?.resume()
@@ -805,7 +940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             options.insert((task, selected["label"] as? String ?? task), at: 0)
         }
         updatePopup(tasks, options: options, all: "全部任务", selected: task)
-        exportButton?.isEnabled = !loading && pendingRefresh == nil
+        exportButton?.isEnabled = !loading && pendingRefresh == nil && !usageSession.needsRead && usageSession.identity == usageIdentity
         refreshPresented(json)
         loadCompact()
     }
@@ -830,27 +965,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model = models.selectedItem?.representedObject as? String ?? "all"
         task = tasks.selectedItem?.representedObject as? String ?? "all"
         group = grouping.selectedSegment == 0 ? "model" : "task"
-        search.stringValue = ""
         statusText = "正在更新筛选…"
         loadUsage()
+    }
+    @objc func resetMainFilters() {
+        model = "all"; task = "all"
+        models.selectItem(at: 0); tasks.selectItem(at: 0)
+        statusText = "正在更新筛选…"; loadUsage()
+    }
+    func clearUsageDisplay() {
+        snapshot = [:]; rows = []; visibleRows = []
+        guard dashboard != nil else { return }
+        for card in [totalCard, inputCard, outputCard, cacheCard, callsCard] { card.update(nil) }
+        trend.days = []; table.reloadData(); rowCount.stringValue = "待读取"
+        coverage.stringValue = "正在读取所选范围"; exportButton?.isEnabled = false
     }
     func controlTextDidChange(_ obj: Notification) { filterRows() }
     func filterRows() {
         guard dashboard != nil else { return }
-        let query = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        visibleRows = rows.filter { query.isEmpty || ($0["label"] as? String ?? "").localizedCaseInsensitiveContains(query) }
-        let descriptor = table.sortDescriptors.first
-        let key = descriptor?.key ?? "total_tokens", ascending = descriptor?.ascending ?? false
-        visibleRows.sort {
-            if key == "label" {
-                let comparison = ($0[key] as? String ?? "").localizedStandardCompare($1[key] as? String ?? "")
-                return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
-            }
-            let a = numeric($0[key]), b = numeric($1[key])
-            if a == nil { return false }; if b == nil { return true }
-            return ascending ? a! < b! : a! > b!
-        }
-        rowCount.stringValue = "\(visibleRows.count) 项"
+        let selection = tableSelection
+        if lastTableSelection != selection { tableRevision += 1; lastTableSelection = selection }
+        visibleRows = selection.rows(rows)
+        rowCount.stringValue = "\(visibleRows.count) / \(rows.count) 项"
         table.reloadData()
     }
     func numberOfRows(in tableView: NSTableView) -> Int { visibleRows.count }
@@ -923,43 +1059,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func applyInterval(_ seconds: Int, refreshAfterChange: Bool = true) {
         guard (0...3600).contains(seconds) else { return }
-        let previous = autoSeconds
         autoSeconds = seconds; usagePreferences.set(seconds, forKey: "refreshSeconds"); rebuildIntervalPicker()
         if isMainWindowProcess {
             if !applyingHostState { sendHost("interval", payload: ["seconds": seconds]) }
         } else { publishHostState() }
-        settingsID += 1; let id = settingsID
-        settingsCommand?.cancel()
         if compactMode {
             scheduleCompact()
             if refreshAfterChange && seconds > 0 { manualRefresh() }
             loadFloating()
             return
         }
+        settingsQueue.enqueue(seconds)
+        usagePreferences.set(seconds, forKey: "pendingRefreshSeconds")
+        flushIntervalSettings(refreshAfterChange: refreshAfterChange)
+    }
+    func flushIntervalSettings(refreshAfterChange: Bool = false) {
         guard backend.url != nil else { return }
+        guard let seconds = settingsQueue.begin() else { return }
+        settingsID += 1; let id = settingsID
         settingsCommand = post("api/settings", body: ["refresh_seconds": seconds]) { [weak self] result in
             guard let self = self, self.settingsID == id else { return }
             self.settingsCommand = nil
             switch result {
             case .success:
+                self.settingsQueue.finish(error: nil)
+                self.sendHost("settingsResult", payload: ["error": ""])
+                if !self.settingsQueue.hasPending { usagePreferences.removeObject(forKey: "pendingRefreshSeconds") }
                 if !self.snapshot.isEmpty { self.render(self.snapshot) }
                 // A paused index will not publish another snapshot to update this text.
                 self.loadCompact()
-                if refreshAfterChange && seconds > 0 { self.manualRefresh() }
+                if self.settingsQueue.hasPending { self.flushIntervalSettings(refreshAfterChange: refreshAfterChange) }
+                else if refreshAfterChange && seconds > 0 { self.manualRefresh() }
             case .failure:
-                self.autoSeconds = previous; usagePreferences.set(previous, forKey: "refreshSeconds"); self.rebuildIntervalPicker()
-                self.sendHost("interval", payload: ["seconds": previous])
-                self.statusText = "刷新间隔设置失败，请重试"
+                self.settingsQueue.finish(error: "刷新间隔尚未保存，已保留修改；请重试。")
+                self.statusText = self.settingsQueue.error!
+                self.sendHost("settingsResult", payload: ["error": self.statusText])
             }
         }
+    }
+    @objc func retrySettings() {
+        saveBudgetDraft()
+        if settingsQueue.pending == nil, let value = usagePreferences.object(forKey: "pendingRefreshSeconds") as? Int { settingsQueue.enqueue(value) }
+        flushIntervalSettings()
     }
     @objc func toggleFloating() {
         if isMainWindowProcess { sendHost("toggleFloating"); return }
         if floating?.isVisible == true { hideFloating() } else { showFloating() }
     }
     func hideFloating() {
+        statusItem?.isVisible = true
+        if !isMainWindowProcess { usagePreferences.set("menu", forKey: "residentMode") }
         if isMainWindowProcess { sendHost("hideFloating"); return }
         resetFloatInteraction()
+        floatDocking?.prepareToHide()
         floatingChoices.cancel()
         floatCollapse?.cancel(); floatCollapse = nil
         stopFloatMouseMonitoring()
@@ -980,14 +1132,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func checkFloatPointer() {
         guard !capsuleState.interactionActive, floating?.isVisible == true, let surface = capsule else { return }
+        if floatDocking?.handlePointer(inside: surface.containsScreenPoint(NSEvent.mouseLocation)) == true { return }
         floatCollapse?.cancel(); floatCollapse = nil
-        setFloatExpanded(capsuleState.keepsExpanded || surface.containsScreenPoint(NSEvent.mouseLocation))
+        setFloatExpanded(capsuleState.keepsExpanded || (capsuleState.keyboardInteracting && floating?.isKeyWindow == true) || surface.containsScreenPoint(NSEvent.mouseLocation))
     }
     func toggleFloatKeepsExpanded() {
         capsuleState.keepsExpanded.toggle(); checkFloatPointer()
     }
     func floatInteractionChanged(_ active: Bool) {
         if active {
+            floatDocking?.pauseInteraction()
             floatCollapse?.cancel(); floatCollapse = nil; stopFloatMouseMonitoring()
             floatAnimation?.step = nil; floatAnimation?.stop(); floatAnimation = nil
         } else if !floatResettingInteraction { checkFloatPointer() }
@@ -1007,7 +1161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard !terminating else { return }
         if isMainWindowProcess { sendHost("showFloating"); return }
         if floating == nil {
-            let panel = NSPanel(contentRect: NSRect(origin: .zero, size: CapsuleSurface.small), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = CapsulePanel(contentRect: NSRect(origin: .zero, size: CapsuleSurface.small), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             floating = panel; panel.title = "Token 胶囊"; panel.delegate = self
             panel.isFloatingPanel = true; panel.hidesOnDeactivate = false; panel.becomesKeyOnlyIfNeeded = true
             panel.isReleasedWhenClosed = false; panel.isMovableByWindowBackground = false; panel.acceptsMouseMovedEvents = true
@@ -1020,6 +1174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             surface.setAccessibilityLabel("Token 用量胶囊，悬停展开详情")
             surface.hover = { [weak self] inside in
                 guard let self = self, !self.capsuleState.interactionActive else { return }
+                if self.floatDocking?.handlePointer(inside: inside) == true { return }
                 if inside {
                     self.floatCollapse?.cancel(); self.floatCollapse = nil
                     self.setFloatExpanded(true)
@@ -1030,11 +1185,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             capsuleState.pinned = pinned
             surface.action = { [weak self] action in
                 guard let self = self else { return }
-                if self.floatingBudgetAction(action) { return }
+                if self.floatingMonitorAction(action) || self.floatingBudgetAction(action) { return }
                 switch action {
-                case "refresh": self.manualRefresh()
+                case "refresh":
+                    if self.capsuleState.monitorMode { self.taskMonitor?.refresh() }
+                    else { self.manualRefresh() }
                 case "details": self.toggleFloatKeepsExpanded()
+                case "expand": self.floatDocking?.explicitExpand()
+                case "collapse": self.floatDocking?.manuallyCollapse()
+                case "autoHide": self.floatDocking?.toggleAutoHide()
+                case "edgeMetric":
+                    self.capsuleState.edgeShowsUsed.toggle()
+                    usagePreferences.set(self.capsuleState.edgeShowsUsed ? "used" : "remaining", forKey: "floatingEdgeMetric")
+                    self.usageSettings?.update(usagePreferences, monitor: self.taskMonitorState)
                 case "main": self.showDashboard()
+                case "monitor": self.openTaskMonitor()
+                case "keyboard":
+                    self.capsuleState.keyboardInteracting = true
+                    self.floatDocking?.explicitExpand(); self.floating?.makeKey(); self.floating?.makeFirstResponder(self.capsule)
                 case "only": self.onlyFloating()
                 case "close": self.closeFloating()
                 case "menu": self.onlyStatusBar()
@@ -1042,6 +1210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 case "pin": self.toggleCapsulePin()
                 case "themeDark": self.applyCapsuleTheme(.dark)
                 case "themeLight": self.applyCapsuleTheme(.light)
+                case "updates": self.showUpdateStatus()
+                case "settings": self.showSettings()
                 case "interval:custom": self.statusCustomInterval()
                 default:
                     if action.hasPrefix("interval:"), let seconds = Int(action.dropFirst("interval:".count)) { self.applyInterval(seconds) }
@@ -1060,6 +1230,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 point.y = min(max(point.y, screenFrame.minY), screenFrame.maxY - CapsuleSurface.small.height)
                 panel.setFrameOrigin(point)
             }
+            let docking = CapsuleDocking(panel: panel, surface: surface, preferences: usagePreferences)
+            floatDocking = docking
+            docking.currentCompact = { [weak self] in
+                guard let self = self else { return .zero }
+                return self.floatPlacement?.compact ?? (self.capsule?.docking ?? 0 > 0 ? self.floatDocking?.compact : self.floating?.frame) ?? .zero
+            }
+            docking.didDropExpanded = { [weak self] compact, detail in
+                guard let self = self else { return }
+                let previous = self.floatPlacement
+                self.floatPlacement = CapsulePlacement(compact: compact, detail: detail,
+                    opensRight: previous?.opensRight ?? false, opensUp: previous?.opensUp ?? false)
+                self.floatLastFrame = detail; self.floatAnchor = NSPoint(x: detail.maxX, y: detail.maxY)
+                self.floatExpanded = true
+            }
+            docking.expand = { [weak self] in self?.setFloatExpanded(true) }
+            docking.collapse = { [weak self] animated in self?.setFloatExpanded(false, animated: animated) }
+            surface.dragReleased = { [weak docking] point in docking?.finishDrag(at: point) }
+            surface.pointerMoved = { [weak docking] point in docking?.pointerMoved(point) }
         }
         floating?.orderFrontRegardless()
         usagePreferences.set(true, forKey: "floatingVisible")
@@ -1084,33 +1272,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let old = panel.frame
         floatAnimation?.step = nil; floatAnimation?.stop(); floatAnimation = nil
         if floatAnchor == nil { floatAnchor = NSPoint(x: old.maxX, y: old.maxY) }
-        let anchor = floatAnchor!
+        if floatPlacement == nil {
+            guard let screen = panel.screen ?? NSScreen.main else { return }
+            floatPlacement = CapsulePlacement.resolve(compact: old, work: screen.visibleFrame, size: CapsuleSurface.large)
+        }
+        floatLastFrame = old
         floatExpanded = expanded
         floatCollapse?.cancel(); floatCollapse = nil
         if expanded || surface.expansion > 0 { startFloatMouseMonitoring() } else { stopFloatMouseMonitoring() }
-        let size = expanded ? CapsuleSurface.large : CapsuleSurface.small
-        let screen = panel.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
-        let target = NSRect(x: min(max(anchor.x - size.width, screen.minX), screen.maxX - size.width),
-                            y: min(max(anchor.y - size.height, screen.minY), screen.maxY - size.height), width: size.width, height: size.height)
+        let target = expanded ? floatPlacement!.detail : floatPlacement!.compact
         let startExpansion = surface.expansion
+        surface.morphCompactFrame = floatPlacement!.compact; surface.morphDetailFrame = floatPlacement!.detail
         let finish: () -> Void = { [weak self] in
             guard let self = self else { return }
             self.floatAnimation = nil
-            if !expanded { self.stopFloatMouseMonitoring(); self.floatAnchor = nil; self.saveCapsuleOrigin() }
-            else { self.checkFloatPointer() }
+            if !expanded { self.stopFloatMouseMonitoring(); self.floatAnchor = nil; self.floatPlacement = nil; self.saveCapsuleOrigin(); self.floatDocking?.didCollapse() }
+            // A completed explicit reveal waits for the next actual pointer
+            // event. Completing an animation is not a synthetic mouse exit.
         }
         if !animated || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            floatMovingFrame = true; surface.expansion = expanded ? 1 : 0; panel.setFrame(target, display: true); floatMovingFrame = false; finish(); return
+            floatMovingFrame = true; surface.expansion = expanded ? 1 : 0; panel.setFrame(target, display: true); floatLastFrame = target; floatMovingFrame = false; finish(); return
         }
-        let animation = CapsuleAnimation(duration: expanded ? 0.18 : 0.14, animationCurve: .easeInOut)
+        let animation = CapsuleAnimation(duration: (expanded ? 0.28 : 0.22) * Double(abs(end - startExpansion)), animationCurve: .linear)
         animation.animationBlockingMode = .nonblocking; animation.frameRate = 60
         animation.step = { [weak self, weak panel, weak surface] progress in
             guard let self = self, !self.capsuleState.interactionActive, let panel = panel, let surface = surface else { return }
             self.floatMovingFrame = true
             let lerp: (CGFloat, CGFloat) -> CGFloat = { $0 + ($1 - $0) * progress }
             surface.expansion = lerp(startExpansion, expanded ? 1 : 0)
-            panel.setFrame(NSRect(x: lerp(old.origin.x, target.origin.x), y: lerp(old.origin.y, target.origin.y),
-                                 width: lerp(old.width, target.width), height: lerp(old.height, target.height)), display: true)
+            let frame = CapsuleMorph.frame(compact: surface.morphCompactFrame!, panel: surface.morphDetailFrame!, progress: surface.expansion).shape
+            panel.setFrame(frame, display: true)
+            self.floatLastFrame = panel.frame
             self.floatMovingFrame = false
             if progress >= 1 { finish() }
         }
@@ -1121,8 +1313,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usagePreferences.set([Double(frame.origin.x), Double(frame.origin.y)], forKey: "capsuleOrigin")
     }
     func windowDidMove(_ notification: Notification) {
-        guard !floatMovingFrame else { return }
+        guard !floatMovingFrame, floatDocking?.movingFrame != true else { return }
         if let moved = notification.object as? NSWindow, moved === floating {
+            if let previous = floatLastFrame {
+                floatPlacement = floatPlacement?.translated(x: moved.frame.minX - previous.minX, y: moved.frame.minY - previous.minY)
+            }
+            floatLastFrame = moved.frame
             if floatAnimation == nil { floatAnchor = NSPoint(x: moved.frame.maxX, y: moved.frame.maxY) }
             saveCapsuleOrigin()
         }
@@ -1144,6 +1340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func releaseDetailData() {
         request?.cancel(); request = nil; requestID += 1
+        usageSession.invalidate()
         snapshot = [:]; rows = []; visibleRows = []
         dashboard?.trend.days = []; dashboard?.table.reloadData()
         compactStamp = nil
@@ -1160,21 +1357,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func hideDashboard() {
         guard !terminating else { return }
-        if isMainWindowProcess { window?.orderOut(nil); NSApp.terminate(nil) }
+        if isMainWindowProcess { NSApp.terminate(nil) }
         else { closeMainWindow() }
     }
     @objc func onlyFloating() {
         guard !terminating else { return }
         if isMainWindowProcess { sendHost("onlyFloating"); return }
-        showFloating(); hideDashboard()
+        showFloating()
+        statusItem?.isVisible = false; usagePreferences.set("floating", forKey: "residentMode")
     }
     @objc func onlyStatusBar() {
         guard !terminating else { return }
         if isMainWindowProcess { sendHost("onlyStatusBar"); return }
         hideFloating()
         floating?.delegate = nil; floating?.contentView = nil; floating?.close()
-        floating = nil; capsule = nil; floatAnimation?.stop(); floatAnimation = nil; floatAnchor = nil
-        hideDashboard()
+        floating = nil; capsule = nil; floatAnimation?.stop(); floatAnimation = nil; floatAnchor = nil; floatPlacement = nil; floatLastFrame = nil; floatDocking = nil
+        publishHostState()
     }
     @objc func showDashboard() {
         guard !terminating else { return }
@@ -1197,10 +1395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     self.start()
                 }
             }
-            if timer == nil {
-                timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
-                timer?.tolerance = 0.1; RunLoop.main.add(timer!, forMode: .common)
-            }
+
         } else if backend.url == nil {
             backend.stop { [weak self] in
                 guard let self = self, !self.compactMode, !self.terminating else { return }
@@ -1239,6 +1434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         compactEpoch += 1; compactDirty = true; compactDirtyGeneration += 1
         compactLastScan = .distantPast
         compactMonitor.start(home: home)
+        startTaskMonitoring(home: home)
     }
     func stopCompactMonitoring() {
         compactEpoch += 1
@@ -1271,6 +1467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         compactSelectionQueued = false
         let query = floatingQuery
         let epoch = compactEpoch, dirtyGeneration = compactDirtyGeneration, home = codexHome
+        reportLocalUpdate(busy: true)
         collectCompactSnapshot(query: query, home: home) { [weak self] result in
             guard let self = self, self.compactMode, self.compactEpoch == epoch, self.codexHome == home, !self.terminating else { return }
             self.compactLastScan = Date()
@@ -1278,6 +1475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             case .success(let json):
                 self.compactDirty = self.compactDirtyGeneration != dirtyGeneration
                 self.todaySnapshot = json["today"] as? Object ?? [:]
+                self.reportLocalUpdate(busy: false, stamp: (self.todaySnapshot["meta"] as? Object)?["generated_at"] as? String)
                 if self.floatingQuery == query {
                     if json["filter_reset"] as? Bool == true { self.resetFloatingFilters() }
                     self.filteredSnapshot = json["filtered"] as? Object ?? [:]
@@ -1295,6 +1493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 if manual { self.refreshPresented(self.todaySnapshot) }
                 self.trimIdleMemory()
             case .failure:
+                self.reportLocalUpdate(busy: false, error: "本地日志读取失败，请重试；上次快照已保留。")
                 self.compactDirty = true
                 if manual { self.finishRefreshing(); self.manualBeganAt = nil; self.manualExpectedStamp = nil }
                 self.capsuleState.status = "读取失败 · 点击刷新重试"
@@ -1356,13 +1555,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if statusMenuTracking { statusMenu?.cancelTracking(); return }
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp { openStatusMenu(); return }
-        if (event?.clickCount ?? 0) >= 2 { showDashboard(); return }
-        let work = DispatchWorkItem { [weak self] in self?.openStatusMenu() }
+        if (event?.clickCount ?? 0) >= 2 { statusPopover?.performClose(nil); showDashboard(); return }
+        let work = DispatchWorkItem { [weak self] in self?.toggleStatusDetail() }
         statusSingleClick = work
         DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
     }
     @objc func openStatusMenu() {
         if isMainWindowProcess { sendHost("statusMenu"); return }
+        statusPopover?.performClose(nil)
         guard !statusMenuTracking, let button = statusItem?.button else { return }
         let menu = NSMenu(); menu.delegate = self; statusMenu = menu
         rebuildStatusMenu(menu)
@@ -1405,8 +1605,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let row = NSMenuItem(title: text, action: nil, keyEquivalent: ""); row.isEnabled = false; menu.addItem(row)
         }
         appendBudgetMenu(menu)
+        let monitor = taskMonitorState["summary"] as? Object ?? [:]
+        let monitoring = NSMenuItem(title: "任务监控 · \(monitor["active"] as? Int ?? 0) 项 · \(monitor["unread"] as? Int ?? 0) 条未读", action: #selector(openTaskMonitor), keyEquivalent: "")
+        monitoring.target = self; menu.addItem(monitoring)
         menu.addItem(.separator())
-        for (title, action) in [("立即刷新", #selector(manualRefresh)), ("显示主面板", #selector(showDashboard)), ("显示 / 隐藏浮窗", #selector(toggleFloating)), ("仅浮窗", #selector(onlyFloating)), ("仅状态栏", #selector(onlyStatusBar))] {
+        for (title, action) in [("立即刷新", #selector(manualRefresh)), ("设置…", #selector(showSettings)), ("数据与更新…", #selector(showUpdateStatus)), ("显示主面板", #selector(showDashboard)), ("显示 / 隐藏浮窗", #selector(toggleFloating)), ("仅浮窗", #selector(onlyFloating)), ("仅状态栏", #selector(onlyStatusBar))] {
             let row = NSMenuItem(title: title, action: action, keyEquivalent: ""); row.target = self; menu.addItem(row)
         }
         menu.addItem(capsuleThemeMenuItem())
@@ -1454,6 +1657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 let summary = json["summary"] as? Object ?? [:]
                 self.updateStatusTitle()
                 self.statusItem?.button?.toolTip = "今日 \(exact(summary["total_tokens"])) tokens · \(self.intervalDescription)"
+                self.refreshPresented(json)
                 self.loadFloating()
             }
         }
@@ -1544,10 +1748,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func refreshPresented(_ json: Object) {
         guard pendingRefresh == nil, let began = manualBeganAt, let required = manualExpectedStamp,
               let stamp = (json["meta"] as? Object)?["generated_at"] as? String, stamp >= required else { return }
-        manualBeganAt = nil; manualExpectedStamp = nil
+        manualBeganAt = nil; manualExpectedStamp = stamp
         let elapsed = Date().timeIntervalSince(began)
         let feedback = String(format: "已核对日志 · %.2f 秒", elapsed)
         reportHelperRefresh(success: true, message: feedback)
+        manualExpectedStamp = nil
         statusText += " · " + feedback
         capsuleState.status = feedback
         capsuleState.indicator = "check"
@@ -1566,9 +1771,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
     @objc func manualRefresh() {
-        guard pendingRefresh == nil, !terminating else { return }
+        guard !terminating else { return }
         if isMainWindowProcess { sendHost("refreshQuota") }
         else { quotaReader.refresh(force: true) }
+        refreshLocal()
+    }
+    @objc func refreshLocal() {
+        guard pendingRefresh == nil, !terminating else { return }
+        reportLocalUpdate(busy: true)
         if !isMainWindowProcess, mainWindowOpen || windowProcesses.mainIsRunning {
             requestHelperRefresh()
             return
@@ -1613,9 +1823,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                         } else { self.refreshVisibleData() }
                     } else {
                         self.manualTimer?.invalidate()
-                        self.manualTimer = Timer(timeInterval: 0.15, repeats: true) { [weak self] _ in self?.poll(force: true) }
+                        self.manualTimer = Timer(timeInterval: 120, repeats: false) { [weak self] _ in
+                            guard let self = self, self.pendingRefresh != nil else { return }
+                            self.finishRefreshing(); self.manualBeganAt = nil; self.manualExpectedStamp = nil
+                            self.reportHelperRefresh(success: false, message: "扫描耗时较长，仍在后台进行")
+                        }
                         RunLoop.main.add(self.manualTimer!, forMode: .common)
-                        self.poll(force: true)
+                        if self.backend.eventsAvailable { self.handleBackendState(self.backend.latestEvent) }
+                        else { self.scheduleBackendFallback(); self.poll(force: true) }
                     }
                 case .failure:
                     self.reportHelperRefresh(success: false, message: "刷新失败，请重试")
@@ -1631,7 +1846,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         pendingRefresh = nil; refreshStarted = nil
         capsuleState.indicator = "refresh"
         refreshButton?.title = "刷新"; refreshButton?.isEnabled = true; capsuleState.enabled = true
-        exportButton?.isEnabled = !snapshot.isEmpty
+        exportButton?.isEnabled = !snapshot.isEmpty && !usageSession.needsRead && usageSession.identity == usageIdentity
     }
     func recover(_ reason: String) {
         guard isMainWindowProcess, !terminating, !restarting, !compactMode, dashboard != nil else { return }
@@ -1650,11 +1865,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func restartWorker() {
         guard isMainWindowProcess, !restarting, !terminating, !compactMode, dashboard != nil else { return }
         restarting = true; request?.cancel(); request = nil; requestID += 1
+        backendScanDeadline?.cancel(); backendScanDeadline = nil
+        timer?.invalidate(); timer = nil; backendFallbackDelay = 5
         refreshCommand?.cancel(); refreshCommand = nil; finishRefreshing()
         floatingRequest?.cancel(); floatingRequest = nil; floatingRequestID += 1
         summaryRequest?.cancel(); summaryRequest = nil; summaryRequestID += 1; compactStamp = nil
         settingsCommand?.cancel(); settingsID += 1
-        snapshot = [:]
+        settingsCommand = nil; settingsQueue.interrupt()
+        usageSession.invalidate(); clearUsageDisplay()
         exportButton?.isEnabled = false
         backend.stop { [weak self] in
             guard let self = self else { return }
@@ -1666,22 +1884,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func exportCSV() {
         guard mainVisible else { showDashboard(); return }
-        guard exportButton?.isEnabled == true, let url = endpoint("api/export.csv") else { return }
+        guard exportButton?.isEnabled == true, usageSession.data != nil, !usageSession.needsRead else { return }
         let panel = NSSavePanel()
         panel.title = "导出当前筛选结果"; panel.nameFieldStringValue = "codex-usage-\(days)-\(group).csv"
         panel.allowedFileTypes = ["csv"]; panel.canCreateDirectories = true
-        panel.message = "导出所选时间、模型和任务的完整分组数据；明细搜索仅影响窗口显示。"
+        let scope = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 28))
+        scope.addItems(withTitles: ["当前显示行（含搜索与排序）", "当前范围全部行"])
+        scope.setAccessibilityLabel("导出范围"); panel.accessoryView = scope
+        panel.message = "导出已显示的统计快照；写入期间范围或显示结果改变时请重新导出。"
         panel.beginSheetModal(for: window) { [weak self] result in
             guard result == .OK, let destination = panel.url, let self = self else { return }
-            self.session.dataTask(with: url) { data, response, error in
-                guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data = data else {
-                    DispatchQueue.main.async { self.alert("导出失败", "统计服务暂时不可用，请刷新后重试。") }; return
-                }
+            let identity = self.usageIdentity, serial = self.usageSession.serial, selection = self.tableSelection
+            let tableRevision = self.tableRevision
+            guard self.usageSession.matches(identity, serial: serial) else { self.alert("请重新导出", "当前范围尚未读取成功。"); return }
+            let visible = scope.indexOfSelectedItem == 0
+            let rows = selection.rows(self.rows, visible: visible)
+            let temporary = destination.deletingLastPathComponent().appendingPathComponent(".codex-export-\(UUID().uuidString)")
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    try data.write(to: destination, options: .atomic)
-                    DispatchQueue.main.async { self.statusText = "已导出 \(destination.lastPathComponent)" }
-                } catch { DispatchQueue.main.async { self.alert("无法保存文件", error.localizedDescription) } }
-            }.resume()
+                    try MainTableSelection.csv(rows).write(to: temporary, options: .withoutOverwriting)
+                    DispatchQueue.main.async {
+                        defer { try? FileManager.default.removeItem(at: temporary) }
+                        guard !self.terminating, self.usageIdentity == identity,
+                              self.usageSession.matches(identity, serial: serial),
+                              !visible || (self.tableSelection == selection && self.tableRevision == tableRevision) else {
+                            if !self.terminating { self.alert("请重新导出", "范围或显示结果已经改变，原文件未被替换。") }; return
+                        }
+                        // Commit and validation share the main queue; range changes cannot interleave.
+                        if rename(temporary.path, destination.path) == 0 { self.statusText = "已导出 \(destination.lastPathComponent)" }
+                        else { self.alert("无法保存文件", String(cString: strerror(errno))) }
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: temporary)
+                    DispatchQueue.main.async { if !self.terminating { self.alert("无法保存文件", error.localizedDescription) } }
+                }
+            }
         }
     }
     @objc func chooseHome() {
@@ -1694,12 +1931,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             usagePreferences.set(url.path, forKey: "codexHome")
             self.sendHost("homeChanged")
             self.model = "all"; self.task = "all"; self.retries = 0
+            self.models.selectItem(at: 0); self.tasks.selectItem(at: 0)
             self.restartWorker()
         }
     }
     @objc func showSupport() { NSWorkspace.shared.open(backend.root) }
     @objc func about() {
-        alert("Codex 用量 1.0.0", "原生 macOS 用量面板\n本地 Token 统计与账号剩余额度。\n额度由 Codex 的只读接口提供，重置卡仅显示数量。\n可调自动刷新和桌面胶囊。\n按 ⌘Q 退出会停止本工具的采集进程。\n\n当前运行：\(nativeArchitecture) · macOS 11+\n独立工具，与 OpenAI 官方无隶属关系。")
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知版本"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        let provenance = (try? Data(contentsOf: usageResourcesURL.appendingPathComponent("BUILD-INFO.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? Object }
+        let revision = String((provenance?["revision"] as? String ?? "未知源码").prefix(12)) + (provenance?["dirty"] as? Bool == true ? " + 工作区修改" : "")
+        alert("Codex 用量 \(version) (\(build))", "原生 macOS 用量面板\n本地 Token 统计与账号剩余额度。\n额度由 Codex 的只读接口提供，重置卡仅显示数量。\n可调自动刷新和桌面胶囊。\n按 ⌘Q 退出会停止本工具的采集进程。\n\n当前运行：\(nativeArchitecture) · macOS 11+\n源码：\(revision)\n独立工具，与 OpenAI 官方无隶属关系。")
     }
     @objc func showCoverage() {
         let meta = snapshot["meta"] as? Object ?? [:]
@@ -1745,9 +1987,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
     let termination = AsyncTermination()
+    var waitingForMainClose = false
+    func prepareMainClose() -> Bool {
+        guard isMainWindowProcess else { return true }
+        saveBudgetDraft(); saveMainWindowFrame()
+        let failure: String?
+        if budgetPage?.saveInFlight == true { failure = "预算正在保存，请等待保存结果后关闭。" }
+        else if budgetPage?.draftBlocksClosing == true { failure = budgetPage?.draftPersistenceError }
+        else if !usagePreferences.synchronize() { failure = "设置尚未写入本机，请重试后关闭。" }
+        else { failure = nil }
+        if let error = failure {
+            statusText = error; window?.makeKeyAndOrderFront(nil)
+            sendHost("closeBlocked", payload: ["message": error]); return false
+        }
+        return true
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender !== window || prepareMainClose()
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard prepareMainClose() else { return .terminateCancel }
+        if !isMainWindowProcess, windowProcesses.mainIsRunning, !terminating {
+            if !waitingForMainClose {
+                waitingForMainClose = true
+                windowProcesses.closeMain { [weak self] closed in
+                    guard let self = self else { return }; self.waitingForMainClose = false
+                    if closed { DispatchQueue.main.async { sender.terminate(nil) } }
+                    else { self.mainWindowOpen = true; self.persistHostWindowMode(); self.publishHostState() }
+                }
+            }
+            return .terminateCancel
+        }
         return termination.request(sender) { finished in
         stopBudgetClients()
+        notificationRouter?.stop(); taskMonitor?.stop(); appearanceObservation = nil; backendScanDeadline?.cancel(); backendScanDeadline = nil; statusPopover?.performClose(nil); statusPopover = nil
         floatingChoices.cancel()
         if isMainWindowProcess {
             saveMainWindowFrame()
@@ -1761,7 +2034,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let group = DispatchGroup()
         if !isMainWindowProcess {
             nativeSummary.cancel(); nativeSummaryBusy = false
-            group.enter(); windowProcesses.closeMain { self.windowProcesses.stop(); group.leave() }
+            windowProcesses.stop()
             group.enter(); collector.stop { group.leave() }
             group.enter(); quotaReader.stop { group.leave() }
         } else { windowProcesses.stop() }

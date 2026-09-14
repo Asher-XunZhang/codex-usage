@@ -35,14 +35,15 @@ class CapsuleControllerInteractionTests(unittest.TestCase):
             '    func startFloatMouseMonitoring()', '    func setFloatExpanded(',
             '    func saveCapsuleOrigin()', '    func windowDidMove(',
         ]).replace('UserDefaults.standard', 'preferences').replace('usagePreferences', 'preferences')
-        fixture = r'''import AppKit
+        fixture = "import AppKit\n" + declaration(macos_source('Capsule.swift').read_text(), 'struct CapsuleMorph') + r'''
+
 let isMainWindowProcess = false
 let suite = "local.codex-usage.test-capsule-controller." + UUID().uuidString
 let preferences = UserDefaults(suiteName: suite)!
 defer { preferences.removePersistentDomain(forName: suite) }
 func check(_ condition: @autoclosure () -> Bool, _ reason: String) { precondition(condition(), reason) }
 final class CapsuleState {
-    var pointerPressed = false, menuPresented = false, keepsExpanded = false
+    var pointerPressed = false, menuPresented = false, keepsExpanded = false, keyboardInteracting = false
     var pinned = false
     var interactionActive: Bool { pointerPressed || menuPresented }
 }
@@ -50,6 +51,7 @@ final class CapsuleSurface {
     static let small = NSSize(width: 76, height: 76), large = NSSize(width: 336, height: 366)
     let state: CapsuleState
     var expansion: CGFloat = 0, cancelCount = 0
+    var morphCompactFrame: NSRect?, morphDetailFrame: NSRect?
     var interactionChanged: ((Bool) -> Void)?
     var hover: ((Bool) -> Void)?, action: ((String) -> Void)?
     var containsPoint: ((NSPoint) -> Bool)?
@@ -63,7 +65,7 @@ final class CapsuleSurface {
 }
 final class CapsuleHost: NSObject { init(surface: CapsuleSurface) {} }
 final class CapsuleAnimation {
-    enum Curve { case easeInOut }; enum Blocking { case nonblocking }
+    enum Curve { case easeInOut, linear }; enum Blocking { case nonblocking }
     static var created = 0
     var step: ((CGFloat) -> Void)?, isAnimating = false, frameRate = 0.0
     var animationBlockingMode = Blocking.nonblocking
@@ -78,6 +80,7 @@ final class NSScreen {
     var visibleFrame = NSRect(x: 0, y: 0, width: 1600, height: 1000)
 }
 final class NSWindow: NSObject {
+    var isKeyWindow = false
     static let willCloseNotification = Notification.Name("fixture-window-will-close")
     struct StyleMask: OptionSet {
         let rawValue: Int
@@ -127,6 +130,13 @@ final class NSEvent {
 }
 final class FixtureButton { var title = "" }
 final class FixtureRequest { func cancel() {} }
+final class CapsuleDocking {
+    var movingFrame = false
+    func prepareToHide() {}
+    func handlePointer(inside: Bool) -> Bool { false }
+    func pauseInteraction() {}
+    func didCollapse() {}
+}
 protocol Driver: AnyObject {
     var testState: CapsuleState { get }
     var testWindow: NSWindow { get }
@@ -141,9 +151,12 @@ protocol Driver: AnyObject {
     func hideForTest()
 }
 final class MainFixture: NSObject, Driver {
+    var statusItem: NSStatusItem?
     let capsuleState = CapsuleState()
     var floating: NSWindow? = NSWindow(), capsule: CapsuleSurface?, floatAnimation: CapsuleAnimation?
     var floatAnchor: NSPoint?, floatExpanded = false, floatMovingFrame = false, floatResettingInteraction = false
+    var floatPlacement: CapsulePlacement?, floatLastFrame: NSRect?
+    var floatDocking: CapsuleDocking?
     var floatCollapse: DispatchWorkItem?, floatMouseMonitor: Any?, floatLocalMouseMonitor: Any?
     var floatingButton: FixtureButton? = FixtureButton(), floatingRequest: FixtureRequest?, floatingRequestID = 0
     var window: NSWindow?, trayOnly = true
@@ -215,6 +228,14 @@ for driver: Driver in [MainFixture()] {
         check(driver.testWindow.frame == held && driver.testAnimation == nil && NSEvent.monitors.isEmpty, "Native menu tracking must freeze geometry and monitors")
         driver.testState.menuPresented = false; driver.interaction(false)
         check(driver.testAnimation != nil && !driver.testTarget, "Closing a menu restores actual-pointer behavior")
+    case "mouse-focus":
+        inside(driver); driver.expand(true); driver.testAnimation!.advance(1)
+        driver.testWindow.isKeyWindow = true; outside(); driver.pointerChanged()
+        check(!driver.testTarget && driver.testAnimation != nil, "Mouse-acquired key window does not prevent pointer departure collapse")
+        driver.testAnimation!.advance(1)
+        driver.testState.keyboardInteracting = true; driver.expand(true); driver.testAnimation!.advance(1)
+        driver.pointerChanged()
+        check(driver.testTarget && driver.testAnimation == nil && !driver.testState.keepsExpanded, "Explicit keyboard interaction retains focus without changing keep-expanded")
     case "manual-hold":
         outside(); driver.toggleHold(); driver.testAnimation!.advance(1)
         check(driver.testState.keepsExpanded && driver.testSurface.expansion == 1 && driver.testAnimation == nil, "Manual keep-open must survive animation completion with pointer outside")
@@ -260,7 +281,7 @@ print(CommandLine.arguments[1] + " passed")
         path = Path(cls.directory.name)
         main = path / 'main.swift'; main.write_text(fixture)
         cls.binary = path / 'check'
-        result = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(main), '-o', str(cls.binary)], capture_output=True, text=True, timeout=120)
+        result = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(macos_source('CapsulePlacement.swift')), str(main), '-o', str(cls.binary)], capture_output=True, text=True, timeout=120)
         if result.returncode:
             raise AssertionError(result.stderr)
 
@@ -277,6 +298,7 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_manual_hold_and_pointer_leave(self):
         self.run_case('manual-hold')
+        self.run_case('mouse-focus')
 
     def test_hide_cancels_gesture_menu_and_monitors(self):
         self.run_case('hide-cancel')

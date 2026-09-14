@@ -83,17 +83,12 @@ final class BudgetCoordinator: NSObject, UNUserNotificationCenterDelegate {
     init(url: URL) { store = BudgetStore(url: url); super.init() }
     func start(source: String, cache: URL) {
         self.source = source; self.cache = cache
-        UNUserNotificationCenter.current().delegate = self
-        let pause = UNNotificationAction(identifier: "pause30", title: "暂停提醒 30 分钟", options: [])
-        let cycle = UNNotificationAction(identifier: "pauseCycle", title: "本周期不再弹出", options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([
-            UNNotificationCategory(identifier: "budget", actions: [pause, cycle], intentIdentifiers: [], options: [])
-        ])
         refresh(force: true)
     }
     func stop() { stopped = true; timer?.invalidate(); timer = nil; reader.cancel() }
     var state: Object {
-        var result: Object = ["rules": store.rules, "summaries": store.summaries, "events": store.events, "source": source]
+        var result: Object = ["rules": store.rules, "summaries": store.summaries, "events": store.events, "source": source, "recovery": store.recovery]
+        if let quota = quota { result["quota"] = quota }
         if let error = store.persistenceError ?? queryError { result["error"] = error }
         return result
     }
@@ -254,6 +249,8 @@ extension AppDelegate {
         }
         coordinator.start(source: codexHome.standardizedFileURL.path, cache: backend.cachePath(codexHome))
         capsuleState.budgetMode = usagePreferences.bool(forKey: "floatingBudgetMode")
+        capsuleState.monitorMode = usagePreferences.bool(forKey: "floatingMonitorMode")
+        capsuleState.edgeShowsUsed = usagePreferences.string(forKey: "floatingEdgeMetric") == "used"
         capsuleState.budgetID = usagePreferences.string(forKey: "floatingBudgetID") ?? ""
         renderBudgetState()
     }
@@ -267,36 +264,43 @@ extension AppDelegate {
         let container = MainPageContainer()
         mainPageContainer = container
         container.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(container)
-        let picker = FeedbackSegmentedControl(labels: ["用量统计", "预算与提醒"], trackingMode: .selectOne, target: self, action: #selector(budgetPageChanged(_:)))
+        let picker = FeedbackSegmentedControl(labels: ["用量统计", "预算与提醒", "任务监控"], trackingMode: .selectOne, target: self, action: #selector(budgetPageChanged(_:)))
         picker.setAccessibilityLabel("主面板页面"); pagePicker = picker
         picker.segmentStyle = .rounded
-        picker.setWidth(110, forSegment: 0); picker.setWidth(110, forSegment: 1)
+        picker.setWidth(110, forSegment: 0); picker.setWidth(110, forSegment: 1); picker.setWidth(100, forSegment: 2)
         picker.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(picker)
+        let updates = FeedbackButton(title: "数据与更新…", target: self, action: #selector(showUpdateStatus)); updates.bezelStyle = .rounded
+        updates.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(updates)
         NSLayoutConstraint.activate([
+            updates.centerYAnchor.constraint(equalTo: picker.centerYAnchor), updates.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -26),
             picker.topAnchor.constraint(equalTo: root.topAnchor, constant: 16), picker.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 26),
             picker.heightAnchor.constraint(equalToConstant: 28),
             container.topAnchor.constraint(equalTo: picker.bottomAnchor, constant: 20), container.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
             container.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 26), container.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -26)
         ])
-        switchBudgetPage(usagePreferences.string(forKey: "mainPage") == "budgets")
+        switchMainPage(usagePreferences.string(forKey: "mainPage") ?? "usage")
     }
-    @objc func budgetPageChanged(_ sender: NSSegmentedControl) { switchBudgetPage(sender.selectedSegment == 1) }
-    func switchBudgetPage(_ budgets: Bool) {
+    @objc func budgetPageChanged(_ sender: NSSegmentedControl) { switchMainPage(["usage", "budgets", "monitor"][max(0, min(2, sender.selectedSegment))]) }
+    func switchBudgetPage(_ budgets: Bool) { switchMainPage(budgets ? "budgets" : "usage") }
+    func switchMainPage(_ requested: String) {
         guard isMainWindowProcess, let container = mainPageContainer, let usage = usagePageView else { return }
-        let changed = mainPage != (budgets ? "budgets" : "usage")
-        if budgets, budgetPage == nil {
-            let page = BudgetPage { [weak self] action, payload in self?.budgetPageAction(action, payload: payload) }
-            budgetPage = page
-            page.update(budgetState)
-            if let data = usagePreferences.data(forKey: "budgetDraft"), data.count <= 65536,
-               let draft = try? JSONSerialization.jsonObject(with: data) as? Object { page.restoreDraft(draft) }
+        let page = ["usage", "budgets", "monitor"].contains(requested) ? requested : "usage"
+        let changed = mainPage != page
+        if page == "budgets", budgetPage == nil {
+            let view = BudgetPage { [weak self] action, payload in self?.budgetPageAction(action, payload: payload) }
+            budgetPage = view; view.update(budgetState)
+            if let data = usagePreferences.data(forKey: "budgetDraftBook") ?? usagePreferences.data(forKey: "budgetDraft") { view.restoreDraftData(data) }
         }
-        mainPage = budgets ? "budgets" : "usage"
-        pagePicker?.selectedSegment = budgets ? 1 : 0
-        container.show(budgets ? budgetPage! : usage)
+        if page == "monitor", taskMonitorPage == nil {
+            let view = TaskMonitorPage { [weak self] action, payload in self?.taskMonitorAction(action, payload: payload) }
+            taskMonitorPage = view; view.update(taskMonitorState)
+        }
+        mainPage = page; pagePicker?.selectedSegment = ["usage", "budgets", "monitor"].firstIndex(of: page) ?? 0
+        container.show(page == "budgets" ? budgetPage! : page == "monitor" ? taskMonitorPage! : usage)
         usagePreferences.set(mainPage, forKey: "mainPage")
-        if changed, budgets { releaseDetailData() }
+        if changed && page != "usage" { releaseDetailData() }
         else if changed, backend.url != nil { loadUsage() }
+        if page == "monitor" { taskMonitorPage?.request() }
         reportBudgetViewing()
     }
     func saveMainWindowFrame() {
@@ -310,8 +314,14 @@ extension AppDelegate {
         guard !window.styleMask.contains(.fullScreen) else { return }
         var frame = window.frame
         let previousPage = usagePreferences.string(forKey: "mainPage") == "budgets" ? "budgets" : "usage"
-        let saved = usagePreferences.string(forKey: "mainWindowFrame")
+        var saved = usagePreferences.string(forKey: "mainWindowFrame")
             ?? usagePreferences.string(forKey: "mainPageFrame." + previousPage)
+        if saved == nil, let legacy = usagePreferences.string(forKey: "NSWindow Frame CodexUsageMain") {
+            let values = legacy.split(whereSeparator: { $0.isWhitespace }).compactMap { Double($0) }
+            if values.count >= 4, values.prefix(4).allSatisfy({ $0.isFinite }), values[2] > 0, values[3] > 0 {
+                saved = NSStringFromRect(NSRect(x: values[0], y: values[1], width: values[2], height: values[3]))
+            }
+        }
         if let saved = saved {
             let stored = NSRectFromString(saved)
             if stored.width.isFinite, stored.height.isFinite, stored.origin.x.isFinite, stored.origin.y.isFinite,
@@ -319,22 +329,46 @@ extension AppDelegate {
         }
         frame.size.width = max(frame.width, window.minSize.width)
         frame.size.height = max(frame.height, window.minSize.height)
-        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+        let matchingScreen = NSScreen.screens.filter { $0.visibleFrame.intersects(frame) }.max { left, right in
+            let a = left.visibleFrame.intersection(frame), b = right.visibleFrame.intersection(frame)
+            return a.width * a.height < b.width * b.height
+        }
+        if let visible = (matchingScreen ?? window.screen ?? NSScreen.main)?.visibleFrame {
             frame.size.width = min(frame.width, visible.width); frame.size.height = min(frame.height, visible.height)
             frame.origin.x = max(visible.minX, min(frame.minX, visible.maxX - frame.width))
             frame.origin.y = max(visible.minY, min(frame.minY, visible.maxY - frame.height))
         }
         window.setFrame(frame, display: true)
+        if saved != nil { usagePreferences.set(NSStringFromRect(frame), forKey: "mainWindowFrame") }
     }
     func saveBudgetDraft() {
         guard let page = budgetPage else { return }
-        if let draft = page.snapshotDraft(), let data = try? JSONSerialization.data(withJSONObject: draft), data.count <= 65536 {
-            usagePreferences.set(data, forKey: "budgetDraft")
-        } else { usagePreferences.removeObject(forKey: "budgetDraft") }
-        usagePreferences.synchronize()
+        guard let draft = page.snapshotDraftBook() else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: draft), data.count <= 524288 else {
+            page.persistenceFailed("草稿过大，未覆盖已保存草稿；请减少模型价格或草稿数量后重试。"); return
+        }
+        usagePreferences.set(data, forKey: "budgetDraftBook")
+        if usagePreferences.synchronize() { page.persistenceSucceeded() }
+        else { page.persistenceFailed("草稿尚未写入本机，请重试保存草稿后关闭窗口。") }
     }
     func budgetPageAction(_ action: String, payload: Object) {
         switch action {
+        case "recoverDrafts":
+            let confirmation = NSAlert(); confirmation.messageText = "备份损坏草稿并重新开始？"
+            confirmation.informativeText = "已保存的预算不会改变。原始草稿会保存到应用支持目录。"
+            confirmation.addButton(withTitle: "备份并恢复"); confirmation.addButton(withTitle: "取消")
+            confirmation.beginSheetModal(for: window) { [weak self] result in
+                guard result == .alertFirstButtonReturn, let self = self else { return }
+                do {
+                    let directory = self.backend.root.appendingPathComponent("desktop")
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    let backup = directory.appendingPathComponent("budget-drafts-damaged-\(UUID().uuidString).json")
+                    guard let data = usagePreferences.data(forKey: "budgetDraftBook") ?? usagePreferences.data(forKey: "budgetDraft") else { return }
+                    try data.write(to: backup, options: .withoutOverwriting)
+                    self.budgetPage?.resetDraftBook(); self.saveBudgetDraft()
+                    self.statusText = "原草稿已备份：\(backup.lastPathComponent)"
+                } catch { self.budgetPage?.persistenceFailed("草稿备份失败：\(error.localizedDescription)") }
+            }
         case "draftChanged": saveBudgetDraft()
         case "viewing": reportBudgetViewing()
         case "requestChoices": loadBudgetChoices()
@@ -416,8 +450,13 @@ extension AppDelegate {
                 }
                 sendHost("budgetRouteAck", payload: ["requestID": id]); return true
             }
+            if action == "budgetPinResult" {
+                budgetPage?.acknowledgePin(id: payload["id"] as? String ?? "", requestID: payload["requestID"] as? String ?? "", error: payload["error"] as? String)
+                return true
+            }
             if action == "budgetResult" {
-                budgetPage?.acknowledgeSave(id: payload["id"] as? String ?? "", revision: payload["revision"] as? Int, error: payload["error"] as? String)
+                budgetPage?.acknowledgeSave(id: payload["id"] as? String ?? "", revision: payload["revision"] as? Int,
+                                             error: payload["error"] as? String, requestID: payload["requestID"] as? String)
                 saveBudgetDraft(); return true
             }
             return false
@@ -427,9 +466,18 @@ extension AppDelegate {
         case "budgetRouteAck": if payload["requestID"] as? String == pendingBudgetRoute?["requestID"] as? String { pendingBudgetRoute = nil }
         case "budgetAction":
             let operation = payload["action"] as? String ?? "", body = payload["payload"] as? Object ?? [:]
-            if operation == "pin", let id = body["id"] as? String { selectFloatingBudget(id); showFloating(); return true }
+            if operation == "pin", let id = body["id"] as? String {
+                var reply: Object = ["id": id, "requestID": body["requestID"] ?? ""]
+                if budgetCoordinator?.store.rules.contains(where: { $0["id"] as? String == id }) != true { reply["error"] = "预算已不存在，请刷新列表" }
+                else {
+                    selectFloatingBudget(id); showFloating()
+                    if floating?.isVisible != true { reply["error"] = "窗口当前无法显示，请稍后重试" }
+                }
+                windowProcesses.sendToMain("budgetPinResult", payload: reply); return true
+            }
             let id = (body["rule"] as? Object)?["id"] as? String ?? body["id"] as? String ?? ""
             var reply: Object = ["id": id]
+            reply["requestID"] = body["requestID"]
             do {
                 try budgetCoordinator?.apply(operation, payload: body)
                 reply["revision"] = budgetCoordinator?.store.rules.first { $0["id"] as? String == id }?["revision"]
@@ -465,13 +513,16 @@ extension AppDelegate {
         if let error = state["error"] as? String { capsuleState.budgetStatus = error; capsuleState.budgetStale = true }
     }
     func selectFloatingBudget(_ id: String) {
-        capsuleState.budgetID = id; capsuleState.budgetMode = true
+        capsuleState.budgetID = id; capsuleState.budgetMode = true; capsuleState.monitorMode = false
+        usagePreferences.set(false, forKey: "floatingMonitorMode")
         usagePreferences.set(id, forKey: "floatingBudgetID"); usagePreferences.set(true, forKey: "floatingBudgetMode")
         renderBudgetState()
     }
     func floatingBudgetAction(_ action: String) -> Bool {
         if action.hasPrefix("content:") {
-            capsuleState.budgetMode = action == "content:budget"; usagePreferences.set(capsuleState.budgetMode, forKey: "floatingBudgetMode"); renderBudgetState(); return true
+            capsuleState.monitorMode = action == "content:monitor"
+            usagePreferences.set(capsuleState.monitorMode, forKey: "floatingMonitorMode")
+            if !capsuleState.monitorMode { capsuleState.budgetMode = action == "content:budget" }; usagePreferences.set(capsuleState.budgetMode, forKey: "floatingBudgetMode"); renderBudgetState(); return true
         }
         if action.hasPrefix("budget:") {
             let id = String(action.dropFirst(7)); if id == "manage" { openBudget(nil) } else { selectFloatingBudget(id) }; return true
@@ -481,6 +532,7 @@ extension AppDelegate {
             do { try budgetCoordinator?.apply("pause", payload: ["id": capsuleState.budgetID, "durationSeconds": 1800]) }
             catch { capsuleState.budgetStatus = error.localizedDescription }; return true
         }
+        if action == "monitorOpen" || (action == "main" && capsuleState.monitorMode) { openTaskMonitor(); return true }
         if action == "main", capsuleState.budgetMode { openBudget(capsuleState.budgetID); return true }
         return false
     }
@@ -500,7 +552,7 @@ extension AppDelegate {
     }
     @objc func budgetMenuSelected(_ sender: NSMenuItem) { openBudget(sender.representedObject as? String) }
     func windowDidBecomeKey(_ notification: Notification) { reportBudgetViewing() }
-    func windowDidResignKey(_ notification: Notification) { reportBudgetViewing() }
-    func applicationDidBecomeActive(_ notification: Notification) { reportBudgetViewing() }
+    func windowDidResignKey(_ notification: Notification) { reportBudgetViewing(); if notification.object as? NSWindow === floating { checkFloatPointer() } }
+    func applicationDidBecomeActive(_ notification: Notification) { reportBudgetViewing(); if usageSettings?.window?.isVisible == true { usageSettings?.updatePermission() } }
     func applicationDidResignActive(_ notification: Notification) { reportBudgetViewing() }
 }

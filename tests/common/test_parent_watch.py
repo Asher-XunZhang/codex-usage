@@ -1,4 +1,4 @@
-"""Preserve the distinct macOS worker lifetimes when sharing Windows support."""
+"""Preserve the distinct polling fallbacks on Unix without native monitoring."""
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch

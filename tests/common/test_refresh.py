@@ -66,6 +66,48 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(self.index.query(days='all')['summary']['total_tokens'], 320)
         self.assertIsNone(self.index.refresh_error)
 
+    def test_idle_wait_has_no_short_timeout_and_stop_wakes_it(self):
+        for seconds in (0, 30):
+            with self.subTest(seconds=seconds):
+                self.index = UsageIndex(self.home, refresh_seconds=seconds)
+                entered = threading.Event()
+                calls = []
+                wait = self.index.refresh_condition.wait
+
+                def observed_wait(timeout=None):
+                    calls.append(timeout)
+                    entered.set()
+                    return wait(timeout)
+
+                with patch.object(self.index.refresh_condition, 'wait', side_effect=observed_wait):
+                    self.launch()
+                    self.assertTrue(entered.wait(2))
+                    self.assertFalse(self.index.stop.wait(.65))
+                    self.assertEqual(len(calls), 1)
+                    if seconds:
+                        self.assertGreater(calls[0], 29)
+                    else:
+                        self.assertIsNone(calls[0])
+                    self.index.stop.set()
+                    self.thread.join(2)
+                    self.assertFalse(self.thread.is_alive())
+
+    def test_stop_wakes_pending_refresh_receipt(self):
+        started = threading.Event()
+        result = []
+
+        def receipt():
+            started.set()
+            result.append(self.index.wait_for_refresh(1, 10))
+
+        waiter = threading.Thread(target=receipt, daemon=True)
+        waiter.start()
+        self.assertTrue(started.wait(2))
+        self.index.stop.set()
+        waiter.join(2)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(result, [0], 'Stopping does not acknowledge an unfinished refresh')
+
     def test_summary_matches_full_query_without_detail_payload(self):
         self.write(400); self.index.scan()
         for filters in [{'days':'all'}, {'days':'1','task':'refresh-task'}]:

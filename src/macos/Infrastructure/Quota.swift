@@ -60,6 +60,17 @@ final class QuotaReader {
     private var generation = 0
     private var lastAttempt = Date.distantPast
     var snapshot = QuotaSnapshot()
+    private(set) var enabled = true
+    var isRefreshing: Bool { child != nil }
+    func setEnabled(_ value: Bool) {
+        guard enabled != value else { return }
+        enabled = value
+        if value { snapshot.error = nil; refresh(force: true) }
+        else { stop { [weak self] in
+            guard let self = self, !self.enabled else { return }
+            self.snapshot.error = "账号查询已关闭"; self.changed?(self.snapshot)
+        } }
+    }
     var cacheURL: URL { root.appendingPathComponent("quota.json") }
     init(root: URL) { self.root = root }
     func loadCache() {
@@ -76,7 +87,7 @@ final class QuotaReader {
         refresh()
     }
     func refresh(force: Bool = false) {
-        guard child == nil else { return }
+        guard enabled, child == nil else { return }
         if !force && Date().timeIntervalSince(lastAttempt) < 55 { schedule(); return }
         timer?.invalidate(); timer = nil
         lastAttempt = Date(); generation += 1; let ticket = generation
@@ -94,7 +105,7 @@ final class QuotaReader {
             }
         }
         do {
-            child = worker; try worker.run()
+            child = worker; try worker.run(); changed?(snapshot)
             let timeout = DispatchWorkItem { [weak self, weak worker] in
                 guard let self = self, ticket == self.generation, worker?.isRunning == true else { return }
                 worker?.terminate()
@@ -106,6 +117,7 @@ final class QuotaReader {
     }
     private func schedule() {
         timer?.invalidate()
+        guard enabled else { timer = nil; return }
         timer = Timer(timeInterval: max(1, 60 - Date().timeIntervalSince(lastAttempt)), repeats: false) { [weak self] _ in self?.refresh() }
         timer?.tolerance = 10
         if let timer = timer { RunLoop.main.add(timer, forMode: .common) }

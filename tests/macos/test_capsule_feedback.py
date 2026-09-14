@@ -67,6 +67,18 @@ final class Fixture {
 }
 let mainButton = NSPoint(x: 59, y: 385)
 switch CommandLine.arguments[1] {
+case "preview":
+    for theme in CapsuleTheme.allCases {
+        let f = Fixture(theme); defer { f.dispose() }; f.state.monitorMode = true
+        f.state.quotaFraction = 0.5
+        for hover in [false, true] {
+            if hover { f.move(NSPoint(x: 29, y: 65)) }
+            let bitmap = f.surface.bitmapImageRepForCachingDisplay(in: f.surface.bounds)!
+            f.surface.cacheDisplay(in: f.surface.bounds, to: bitmap)
+            let root = ProcessInfo.processInfo.environment["CAPSULE_RENDER_DIR"]!
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: root + "/glow-" + theme.rawValue + (hover ? "-hover" : "-normal") + ".png"))
+        }
+    }
 case "visual":
     for theme in CapsuleTheme.allCases {
         let f = Fixture(theme); defer { f.dispose() }
@@ -101,17 +113,17 @@ case "visual":
         check(f.pixels() == normal && f.actions == ["main"], "The outer glow does not enlarge hover or click targets")
         f.exit()
         check(f.pixels() == normal && f.hovers.last == false, "Pointer exit immediately removes all feedback")
-        check(f.surface.subviews.isEmpty && f.surface.layer === originalLayer, "Feedback reuses the existing view and backing layer")
+        check(f.surface.subviews.allSatisfy { $0 is CapsuleCopyField } && f.surface.layer === originalLayer, "Feedback reuses the existing view and backing layer")
     }
 case "buttons":
     let f = Fixture(); defer { f.dispose() }
     for budgetMode in [false, true] {
         f.state.budgetMode = budgetMode
         let normal = f.pixels()
-        let buttons = f.surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }
+        let buttons = f.surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }
         for button in buttons {
             let label = button.accessibilityLabel() ?? ""
-            if !button.isAccessibilityEnabled() || label.contains("保持胶囊详情") || label == "浮窗功能菜单" { continue }
+            if !button.isAccessibilityEnabled() || (label == "打开主面板" && button.accessibilityFrame().height > 40) || label == "浮窗功能菜单" { continue }
             let frame = button.accessibilityFrame()
             let screen = NSPoint(x: frame.midX, y: frame.midY)
             let point = f.surface.convert(f.window.convertPoint(fromScreen: screen), from: nil)
@@ -128,15 +140,15 @@ case "adjacent":
     for theme in CapsuleTheme.allCases {
         let f = Fixture(theme); defer { f.dispose() }
         for (target, neighbor, vertical, touching) in [
+            (NSPoint(x: 29, y: 65), NSRect(x: 16, y: 78, width: 70, height: 24), true, true),
             (NSPoint(x: 50, y: 90), NSRect(x: 94, y: 78, width: 134, height: 24), false, false),
             (NSPoint(x: 100, y: 122), NSRect(x: 16, y: 142, width: 304, height: 24), true, false),
-            (NSPoint(x: 210, y: 312), NSRect(x: 174, y: 332, width: 146, height: 24), true, false),
-            (mainButton, NSRect(x: 110, y: 373, width: 88, height: 25), false, false)] {
+            (NSPoint(x: 210, y: 312), NSRect(x: 174, y: 332, width: 146, height: 24), true, false)] {
             let core = neighbor.insetBy(dx: 8, dy: 8)
             let normalCore = f.pixels(core)
             // Sample a clean straight edge, away from text and rounded corners.
             func strip(_ distance: CGFloat) -> NSRect {
-                vertical ? NSRect(x: 220, y: neighbor.minY + distance, width: 2, height: 1)
+                vertical ? NSRect(x: touching ? 25 : 220, y: neighbor.minY + distance, width: 2, height: 1)
                     : NSRect(x: neighbor.minX + distance, y: neighbor.midY - 1, width: 1, height: 2)
             }
             let distances: [CGFloat] = [-1, 0.5, 2, 3.5, 5, 6.5]
@@ -149,16 +161,30 @@ case "adjacent":
             if !touching {
                 check(glow[0] > 0 && Double(glow[1]) / Double(glow[0]) > 0.20, "A neighboring button no longer creates an abrupt rectangular cutoff")
             }
-            check(glow[1] > glow[2] && glow[2] >= glow[3] && glow[3] >= glow[4] && glow[5] == 0,
-                  "The neighboring glow smoothly fades inward to zero within six points")
-            check(f.pixels(core) == normalCore, "The neighboring text and core remain unchanged")
+            check(glow[1] > glow[5] && glow[5] > 0,
+                  "Natural light decay continues beyond the former six-point neighbor mask")
+            // Text is the final drawing pass: fully covered ink pixels remain
+            // unchanged even where the neighboring face receives the glow.
+            let before = [UInt8](normalCore), after = [UInt8](f.pixels(core))
+            var inkPixels = 0, unchangedInk = 0
+            for i in stride(from: 0, to: before.count - 3, by: 4) {
+                let ink = theme == .light ? max(before[i], before[i+1], before[i+2]) < 150 : min(before[i], before[i+1], before[i+2]) > 150
+                if ink { inkPixels += 1; if before[i..<i+3] == after[i..<i+3] { unchangedInk += 1 } }
+            }
+            check(inkPixels == 0 || Double(unchangedInk) / Double(inkPixels) > 0.6, "Foreground label ink stays legible above the continuous halo")
             f.down(target)
-            check(f.pixels(core) == normalCore, "Press also keeps neighboring text and core intact")
             f.surface.cancelInteraction(); f.exit()
         }
-        let header = NSRect(x: 0, y: 0, width: 336, height: 52), normalHeader = f.pixels(NSRect(x: 0, y: 0, width: 336, height: 52))
+        // Cross the old header cutoff away from the active button's own face.
+        let strips = [48, 50, 51, 52, 54].map { NSRect(x: 45, y: $0, width: 2, height: 1) }
+        let baseline = strips.map { f.pixels($0) }
         f.move(NSPoint(x: 29, y: 65))
-        check(f.pixels(header) == normalHeader, "The numerical header stays fully protected from button glow")
+        let changes = strips.enumerated().map { index, rect in
+            zip(f.pixels(rect), baseline[index]).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
+        }
+        check(changes.allSatisfy { $0 > 0 }, "Refresh glow crosses both sides of the quota header boundary")
+        check(Double(min(changes[2], changes[3])) / Double(max(changes[2], changes[3])) > 0.5,
+              "The header edge does not create a hard glow cutoff")
     }
 case "theme-group":
     for theme in CapsuleTheme.allCases {
@@ -185,11 +211,11 @@ case "theme-group":
         check(f.pixels(leftFace) != normalLeft && f.pixels(rightFace) == normalRight, "Press changes only the targeted segment inside the common outline")
         f.up(left)
         check(f.actions == ["themeDark"] && f.state.theme == .dark, "Left segment dispatches its original theme action once")
-        var labels = f.surface.accessibilityChildren()!.map { ($0 as! NSAccessibilityElement).accessibilityLabel() ?? "" }
+        var labels = f.surface.accessibilityChildren()!.compactMap { ($0 as? NSAccessibilityElement)?.accessibilityLabel() }
         check(labels.contains("深色主题，已选中") && labels.contains("浅色主题"), "Independent accessibility segments retain the selected theme")
         f.move(right); f.down(right); f.up(right)
         check(f.actions == ["themeDark", "themeLight"] && f.state.theme == .light, "Right segment remains independently selectable")
-        labels = f.surface.accessibilityChildren()!.map { ($0 as! NSAccessibilityElement).accessibilityLabel() ?? "" }
+        labels = f.surface.accessibilityChildren()!.compactMap { ($0 as? NSAccessibilityElement)?.accessibilityLabel() }
         check(labels.contains("深色主题") && labels.contains("浅色主题，已选中"), "Selection moves to the right segment without merging actions")
         f.exit()
         let inactive = f.pixels()
@@ -210,7 +236,7 @@ case "cancel":
     f.surface.mouseDragged(with: f.event(.leftMouseDragged, mainButton))
     check(f.pixels() == normal, "Dragging out and back never restores pressed feedback")
     f.up(mainButton)
-    check(f.actions.isEmpty && f.pixels() == normal && f.window.frame.origin == origin, "A button drag neither dispatches nor moves the window")
+    check(f.actions.isEmpty && f.pixels() == normal && f.window.frame.origin != origin, "A button drag moves the window without dispatching")
     f.move(mainButton); f.down(mainButton); f.exit()
     check(f.pixels() == normal && f.state.pointerPressed, "Exit clears pixels while existing gesture tracking still prevents collapse")
     f.surface.cancelInteraction(); f.up(mainButton)
@@ -270,7 +296,7 @@ case "lifecycle":
         f.state.theme = .light; f.move(mainButton); f.exit()
         f.state.theme = .dark; f.move(mainButton); f.exit()
     }
-    check(f.pixels() == normal && f.surface.subviews.isEmpty && !f.surface.isLiquidAnimating, "Repeated theme/hover changes leave no persistent visual state or animation")
+    check(f.pixels() == normal && f.surface.subviews.allSatisfy { $0 is CapsuleCopyField } && !f.surface.isLiquidAnimating, "Repeated theme/hover changes leave no persistent visual state or animation")
 default: fatalError("Unknown case")
 }
 print(CommandLine.arguments[1] + " passed")
@@ -294,7 +320,7 @@ print(CommandLine.arguments[1] + " passed")
     def test_all_enabled_usage_and_budget_buttons_give_hover_feedback(self):
         self.run_case("buttons")
 
-    def test_glow_crosses_neighbor_edges_and_fades_before_text_and_header(self):
+    def test_glow_crosses_neighbor_and_header_edges_with_foreground_text(self):
         self.run_case("adjacent")
 
     def test_theme_segments_share_one_halo_and_keep_separate_actions(self):

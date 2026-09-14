@@ -139,6 +139,12 @@ final class Backend {
     var starting = false
     var stopping = false
     var onExit: (() -> Void)?
+    var onState: ((Object) -> Void)?
+    var onEventsUnavailable: (() -> Void)?
+    private var eventChannel: BackendEventChannel?
+    private var handshakeDeadline: DispatchWorkItem?
+    private(set) var eventsAvailable = false
+    private(set) var latestEvent: Object = [:]
     var logHandle: FileHandle?
     var stopCallbacks: [() -> Void] = []
     init() {
@@ -193,7 +199,7 @@ final class Backend {
     }
     func start(home: URL, refreshSeconds: Int, completion: @escaping (Result<URL, Error>) -> Void) {
         guard !starting, process == nil, !stopping else { return }
-        starting = true
+        starting = true; eventsAvailable = false; latestEvent = [:]
         generation = UUID()
         let ticket = generation
         DispatchQueue.global(qos: .userInitiated).async {
@@ -217,16 +223,39 @@ final class Backend {
                     let child = Process()
                     child.executableURL = python
                     child.arguments = ["-E", "-s", "-B", self.resources.appendingPathComponent("backend/dashboard_server.py").path,
-                                       "--port", "0", "--codex-home", home.path, "--state-file", self.stateURL!.path,
+                                       "--desktop-events", "--port", "0", "--codex-home", home.path, "--state-file", self.stateURL!.path,
                                        "--instance-id", self.identity, "--parent-pid", String(getpid()),
                                        "--refresh-seconds", String(refreshSeconds),
                                        "--cache-path", self.cachePath(home).path]
-                    child.standardOutput = handle; child.standardError = handle
+                    let pipe = Pipe()
+                    child.standardOutput = pipe; child.standardError = handle
+                    let channel = BackendEventChannel(handle: pipe.fileHandleForReading); self.eventChannel = channel
+                    channel.event = { [weak self, weak child] object in
+                        guard let self = self, let child = child, self.generation == ticket, !self.stopping,
+                              object["instance_id"] as? String == self.identity,
+                              (object["pid"] as? NSNumber)?.int32Value == child.processIdentifier else { return }
+                        self.eventsAvailable = true
+                        if object["event"] as? String == "desktop_ready", self.starting,
+                           let text = object["url"] as? String, let parsed = URL(string: text), parsed.host == "127.0.0.1", parsed.scheme == "http", parsed.port != nil {
+                            self.handshakeDeadline?.cancel(); self.handshakeDeadline = nil
+                            self.url = parsed; self.starting = false; completion(.success(parsed))
+                        } else if object["event"] as? String == "desktop_state" {
+                            self.latestEvent = object; self.onState?(object)
+                        }
+                    }
+                    channel.failed = { [weak self] in
+                        guard let self = self, self.generation == ticket, !self.stopping else { return }
+                        self.eventsAvailable = false
+                        if self.starting { self.waitForState(ticket, attempts: 5, completion: completion) }
+                        else { self.onEventsUnavailable?() }
+                    }
+                    channel.start()
                     child.terminationHandler = { [weak self] _ in
                         DispatchQueue.main.async {
                             guard let self = self, self.generation == ticket, !self.stopping else { return }
                             let wasStarting = self.starting
-                            self.process = nil; self.url = nil; self.starting = false
+                            self.process = nil; self.url = nil; self.starting = false; self.eventsAvailable = false
+                            self.handshakeDeadline?.cancel(); self.handshakeDeadline = nil; self.eventChannel?.close(); self.eventChannel = nil
                             try? self.logHandle?.close(); self.logHandle = nil
                             if let state = self.stateURL { try? fm.removeItem(at: state) }
                             if wasStarting {
@@ -235,10 +264,15 @@ final class Backend {
                         }
                     }
                     self.process = child
-                    try child.run()
-                    self.waitForState(ticket, attempts: 150, completion: completion)
+                    try child.run(); try? pipe.fileHandleForWriting.close()
+                    let timeout = DispatchWorkItem { [weak self] in
+                        guard let self = self, self.generation == ticket, self.starting else { return }
+                        self.waitForState(ticket, attempts: 0, completion: completion)
+                    }
+                    self.handshakeDeadline = timeout; DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: timeout)
                 } catch {
                     self.process = nil; self.starting = false
+                    self.eventChannel?.close(); self.eventChannel = nil; self.handshakeDeadline?.cancel(); self.handshakeDeadline = nil
                     try? self.logHandle?.close(); self.logHandle = nil
                     completion(.failure(error))
                 }
@@ -251,7 +285,7 @@ final class Backend {
            let obj = try? JSONSerialization.jsonObject(with: data) as? Object,
            (obj["pid"] as? NSNumber)?.doubleValue == Double(child.processIdentifier),
            let text = obj["url"] as? String, let parsed = URL(string: text), parsed.host == "127.0.0.1", parsed.scheme == "http", parsed.port != nil {
-            url = parsed; starting = false; completion(.success(parsed)); return
+            url = parsed; starting = false; handshakeDeadline?.cancel(); handshakeDeadline = nil; completion(.success(parsed)); if !eventsAvailable { onEventsUnavailable?() }; return
         }
         guard attempts > 0 else {
             stop { completion(.failure(NSError(domain: "Desktop", code: 5, userInfo: [NSLocalizedDescriptionKey: "启动超时，请重试或查看支持文件夹内的日志。"]))) }
@@ -262,7 +296,8 @@ final class Backend {
     func stop(_ completion: @escaping () -> Void) {
         stopCallbacks.append(completion)
         guard !stopping else { return }
-        stopping = true; starting = false; generation = UUID(); url = nil
+        stopping = true; starting = false; generation = UUID(); url = nil; eventsAvailable = false; latestEvent = [:]
+        eventChannel?.close(); eventChannel = nil; handshakeDeadline?.cancel(); handshakeDeadline = nil
         let child = process
         process = nil
         let state = stateURL

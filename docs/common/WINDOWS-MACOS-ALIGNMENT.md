@@ -1,10 +1,11 @@
 # Windows → macOS 功能与体验对齐清单
 
-更新日期：2026-09-13。用途：供 macOS 维护者快速了解 Windows 已落地的变更、定位对应实现，并按行为验收迁移结果。
+更新日期：2026-09-14。用途：保留 Windows 已落地的行为编号、实现入口与历史效果图；macOS 最新完成状态统一见[当前适配清单](MACOS-ADAPTATION-BACKLOG.md)，不再从历史基线推断。
 
 ## 1. 比较基线与状态
 
-- **macOS 基线**：`main` 提交 `f7f35c964bca7770405b169bdd3104f5a4c8e002`。这是源码基线，**不是已发布的 v1.0.1 安装包**；该提交已经包含尚未发布的预算功能。
+- **历史 macOS 比较基线**：`f7f35c964bca7770405b169bdd3104f5a4c8e002`，已含预算源码，不能等同于公开 v1.0.1 安装包。
+- **本轮 macOS 状态**：`cf8bbed2d43526a9f6401d9e86de30bc12a56413`＋工作区修改；数据、预算保护、任务监控、四方向展开、全区域拖动、四边隐藏、统一设置和事件等待均已接入当前源码。[本轮验收](../macos/FEATURE-SYNC-VALIDATION.md)区分安装版实测与合成／跨架构证据；[已批准设计](../macos/FEATURE-SYNC-PROPOSAL.md)保存审批范围。
 - **Windows 对照**：v1.0.2 候选源码与该标签的公开发行。本文行为清单已更新；第 8 节图片保留内部 1.3.1 快照，仅用来说明当时的布局，不代表最终监控界面或后续拖动行为。
 - **状态**：下文“已实现”指 Windows 当前源码已有对应行为；不表示 macOS 已同步，也不表示每种设备均已实测。任务监控及已知未完成项单列。
 - **迁移原则**：对齐数据与操作后果，使用 AppKit 原生实现；不要求复制 WPF 模板、Win32 消息、Windows 字体或 Ctrl 快捷键。
@@ -83,7 +84,7 @@
 | F03 | **悬停不形成反馈循环**：以实际屏幕指针判断，离开确认 90 ms；形变产生的合成进入不能在同一静止坐标反复重开。移除覆盖整个浮窗的重复文字提示，保留读屏说明和显式错误详情入口。 |
 | F04 | **按空间选择展开方向**：默认向左下；左侧不足向右，下方不足向上，尽量保留 12 DIP 工作区边距。考虑负坐标、任务栏／Dock、不同缩放与不规则多屏，面板空间不足时优先保证内容可达。 |
 | F05 | **统一拖动行为**：圆环、侧签和展开后的整个可见区域可拖动，移动超过 3 DIP 后取消原点击。拖动时自由跟随；松手后才恢复越界位置或吸附边缘，下一次展开重新选方向。短暂悬停确认允许先抓住圆环，恢复动画的绘制与点击范围保持一致。 |
-| F06 | **四边吸附与自动隐藏**：靠近工作区边缘 16 DIP 松开可吸附；相邻屏幕实际连通的接缝不吸附，未被邻屏覆盖的边段仍可用。菜单、拖动和保持展开期间暂停隐藏。 |
+| F06 | **四边吸附与自动隐藏**：靠近工作区边缘 16 DIP 松开可吸附。Windows 排除相邻屏幕实际连通的接缝，未被邻屏覆盖的边段仍可用；macOS 按 2026-09-15 用户确认，接缝也贴合并自动收成侧签，以松手指针所在屏幕为归属，侧签留在该屏幕内。菜单、拖动和保持展开期间暂停隐藏。 |
 | F07 | **额度侧签**：左右 28×72 DIP，上下 76×28 DIP；显示当前账号额度或所选预算的剩余／已用百分比。未知显示“—”，过期有标记；已用视图的警示色仍由剩余额度决定，文字及读屏语义一致。 |
 | F08 | **分阶段唤回**：贴边离开后 550 ms 等待、220 ms 收为侧签；在侧签周围 8 DIP 局部范围停留 120 ms，再用 160 ms 唤回圆环；继续真实移入圆环才展开，不把整条屏幕边缘当触发区。详情展开／收起目标为 280／220 ms；减少动画时保留防误触等待。 |
 | F09 | **保留电池式摘要与分组布局**：顶部电池条在用量模式显示账号周余与固定今日 Token，独立于下方本地筛选；预算模式显示所选预算余量。其下为导航、保持展开／更多、筛选与结果、更新状态，固定底部仅“打开主面板”“收起”。电池填充不裁切文字。 |
@@ -106,12 +107,13 @@
 
 ## 5. 共享代码差异与合入前处理
 
-以下列出本次共享源码的最终处理。macOS 界面与预算规则未同步 Windows 改进；已安装的 macOS v1.0.1 不受源码合入影响。
+以下列出共享源码的当前处理。macOS 已补齐部分界面与保存行为，未完成全量对齐。单独合入源码不替换 App；2026-09-14 本机候选已另行构建安装，公开发行包与本机候选须分别识别。
 
 | 项目 | 当前处理 | 验证边界 |
 | --- | --- | --- |
 | `/api/shutdown` 授权 | Windows 启动器为每个后端生成独立私密凭据，仅经子进程环境传递；公开实例标识不能授权退出，凭据不进入状态文件或健康响应。macOS 保持无该接口（404）。 | 覆盖公开标识、错误凭据、无私密通道、正常退出及强制父进程退出。 |
-| 父进程监测 | Windows 同时等待父进程退出与停止事件，移除 200 毫秒周期超时；macOS 主面板立即首检、每 0.5 秒检查，短时采集先等待 0.2 秒。 | Windows 原生句柄与退出测试；Unix 顺序对照 main，实际 macOS 运行另按 CI/实机证据判断。不能从线程唤醒推算整机功耗。 |
+| 父进程监测 | Windows 已同时等待父进程退出与停止事件，没有 200 毫秒周期超时；macOS 当前工作区改为 `kqueue` 父进程退出事件＋停止管道，主面板和短时采集都不再周期检查。其他 Unix 保留原轮询回退。 | macOS 实测注册竞态、正常／强制父进程退出、取消和资源释放；Windows 原生句柄测试需在 Windows 运行。不能从线程活动推算整机功耗。 |
+| 空闲服务与刷新等待 | macOS 当前工作区 HTTP 循环等待请求或停止管道；Windows HTTP 循环仍保留 0.25 秒超时。共享索引等待实际刷新期限，关闭自动刷新时无限等待；刷新、配置变化和停止主动唤醒。 | 核对手动刷新、设置切换、退出信号和待完成刷新请求；实测及范围见 [macOS 空闲等待优化](../macos/IDLE-WAITS.md)。 |
 | 启动参数 | 仅 Windows 新增直接父 PID 启动校验；macOS 主面板维持原参数校验，再由监测线程判断父进程。 | 独立保留 Unix 和 Windows 回归。 |
 | 本地监听启动 | 数字回环地址直接绑定，不再执行反向 DNS 查询，避免离线或解析缓慢时阻塞启动和退出清理。 | macOS CI 堆栈复现了原阻塞；两端生命周期与禁止 DNS 的回归检查覆盖修复。 |
 | 发行源码 | 共享清单完整带入两端源码、测试、工具和固定资源清单，避免带了 Windows 测试却漏掉依赖。 | 实际解包源码运行与链接检查；包内资源和源码树分别验证。 |
@@ -126,9 +128,9 @@
 - 预算超支时侧签的已用百分比仍最多显示 100%，尚未实现真实超过 100% 的数字展示；缺价修复仍需手填价格，不是自动查价。可靠账号身份识别、官方“期间消耗”预算也未实现。
 - 预算数据源不匹配已有校验；仍缺少原目录／当前目录对照和就地切回引导。不能据此宣称完全没有复制到新目录能力，通用复制保存新规则时会按当前数据源规范化。
 - 深浅主题不等于系统高对比度支持已验收；合成负坐标／混合 DPI 几何测试不等于真实多显示器拖动已验收；绘制提交间隔不等于实际显示帧率。
-- macOS UI 和预算规则保持基线；第 5 节是共享层已完成的修复。Windows C# 改进不会因合并分支自动进入 Swift 界面。
+- macOS 的 D01–D06、B01 及 B02–B04/B08 的部分行为已在工作区补齐；详细状态见[当前适配清单](MACOS-ADAPTATION-BACKLOG.md)。其余 Windows C# 改进不会因合并分支自动进入 Swift 界面。
 
-存储兼容注意：Windows 多草稿 v2 使用 `fields` 等字段，macOS 单草稿 v1 使用 `values`／`expectedRevision`；macOS 偏好使用 UserDefaults，Windows 设置使用 JSON。需要设计迁移与失败回退，不能直接拷贝文件或照搬配置恢复代码。
+存储兼容注意：Windows 多草稿 v2 使用 `fields` 等字段；macOS 当前已有 v2 草稿集合，内部保留本平台 `values`／`expectedRevision`，并迁移旧单草稿 v1。macOS 偏好使用 UserDefaults，Windows 设置使用 JSON，不能直接拷贝文件或照搬配置恢复代码。
 
 ## 7. 迁移入口与建议验收顺序
 
@@ -143,7 +145,7 @@
 | 托盘／窗口导航 | [Tray.cs](../../src/windows/Features/Tray/Tray.cs)、[TrayPreview.cs](../../src/windows/Diagnostics/TrayPreview.cs)、[TrayDetailWindow.cs](../../src/windows/Features/Tray/TrayDetailWindow.cs)、[Host.cs](../../src/windows/App/Host.cs) | [Main.swift](../../src/macos/App/Main.swift)、[StatusMenu.swift](../../src/macos/Features/MenuBar/StatusMenu.swift)、[WindowProcess.swift](../../src/macos/Infrastructure/WindowProcess.swift) | [TrayInteractionTests.cs](../../src/windows/Diagnostics/TrayInteractionTests.cs)、[TrayTests.cs](../../src/windows/Diagnostics/TrayTests.cs) |
 | 原生查询／进程／分发 | [NativeIndex.cs](../../src/windows/Infrastructure/NativeIndex.cs)、[Processes.cs](../../src/windows/Infrastructure/Processes.cs)、[Core.cs](../../src/windows/Infrastructure/Core.cs)、[build_windows.py](../../tools/windows/build.py)、[verify_windows.py](../../tools/windows/verify_release.py) | [Summary.c](../../src/macos/Helpers/Summary.c)、[Runtime.swift](../../src/macos/Infrastructure/Runtime.swift)、[build.py](../../tools/macos/build.py)、[package.py](../../tools/macos/package.py) | [test_windows_native.py](../../tests/windows/test_windows_native.py)、[test_windows_lifecycle.py](../../tools/windows/test_lifecycle.py)、[windows.yml](../../.github/workflows/windows.yml) |
 
-建议按以下顺序拆成可独立审阅的 PR，迁移后填写 macOS 提交号与验收证据：
+以下为最初的迁移拆分参考；其中首批工作已有实现。已批准批次见[设计方案](../macos/FEATURE-SYNC-PROPOSAL.md#7-实施批次与验收门槛)，当前实现与验证状态以[适配清单](MACOS-ADAPTATION-BACKLOG.md)和[验收记录](../macos/FEATURE-SYNC-VALIDATION.md)为准：
 
 1. 先处理第 5 节共享接口、生命周期与发行源码问题；执行 macOS 原有回归。
 2. 同步 D01–D06、B01–B08：优先保护数据、草稿和恢复能力，再调整预算表单。

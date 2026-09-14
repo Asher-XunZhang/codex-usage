@@ -15,7 +15,7 @@ cd codex-usage
 - 开发新改动：`git switch -c codex/my-change origin/main`。
 - 重现 macOS 旧正式包：`git checkout --detach v1.0.1`，使用[该 tag 的构建文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)。不要在旧 tag 中调用下文的新模块路径。
 
-v1.0.2 仅发布 Windows 包；从当前源码构建 macOS 属于开发构建，不等于已经有 macOS v1.0.2 正式包。
+v1.0.2 Release 同时提供两端包，但其原有标签仍对应 Windows 源码。复现新增 macOS 包时，使用 Release 说明中的 macOS 源码提交，或包内 source/；应用 Contents/Resources/BUILD-INFO.json 记录编译提交及源码摘要。不要用原有 v1.0.2 标签重建新增 macOS 功能。
 
 ## 当前目录与职责
 

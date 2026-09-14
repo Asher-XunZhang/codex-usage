@@ -95,6 +95,22 @@ class DesktopLifecycleTests(unittest.TestCase):
         self.assertEqual(child.wait(timeout=5), 0)
         self.assert_released(state)
 
+    @unittest.skipIf(os.name == 'nt', 'Unix signal shutdown')
+    def test_signals_without_parent_stop_idle_listener_and_partial_request(self):
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(signal=sig):
+                # A standalone server still needs a stop wakeup without a parent
+                # monitor thread. An incomplete HTTP client cannot delay exit.
+                command = self.command(os.getpid())[:-2] + ['--refresh-seconds', '0']
+                child = subprocess.Popen(command, stdout=self.log_stream, stderr=self.log_stream)
+                self.children.append(child)
+                state = self.ready()
+                with socket.create_connection(('127.0.0.1', urlsplit(state['url']).port), timeout=2) as client:
+                    client.sendall(b'GET /health HTTP/1.1\r\n')
+                    child.send_signal(sig)
+                    self.assertEqual(child.wait(timeout=3), 0)
+                self.assert_released(state)
+
     def test_shutdown_rejects_wrong_instance_and_foreign_origin(self):
         child = subprocess.Popen(self.command(os.getpid()), stdout=self.log_stream, stderr=self.log_stream, env=self.worker_env)
         self.children.append(child)

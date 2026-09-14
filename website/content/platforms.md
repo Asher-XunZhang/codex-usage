@@ -1,45 +1,41 @@
 ---
 title: 平台支持与功能差异
-description: 对比 Windows v1.0.2 与 macOS v1.0.1 正式下载包的功能和环境。
+description: 对比 Windows 与 macOS v1.0.2 的功能、安装包与验证边界。
 ---
 
 # 平台支持与功能差异
 
-**Windows 当前下载为 v1.0.2，macOS 当前下载为 v1.0.1。** 本次 Windows 发布不替换旧 macOS 安装包，也不会改变已经安装的 macOS 应用。
+**v1.0.2 提供 Windows x64、macOS Apple Silicon 和 Intel 包。** macOS 包于 2026-09-15 补充发布，更新 App 后才会获得新增功能。
 
-## 按下载包选择
-
-| 能力 | Windows v1.0.2 | macOS v1.0.1 |
+| 能力 | Windows v1.0.2 | macOS v1.0.2 |
 | --- | --- | --- |
-| 原生界面 | WPF 主面板、浮窗与 Windows 系统托盘 | AppKit 主面板、菜单栏与浮窗 |
-| 本机 Token、趋势、模型与任务筛选 | 支持 | 支持 |
-| 只读账号额度、重置时间与重置卡数量 | 支持；需要本机 Codex 可查询 | 支持；需要本机 Codex 可查询 |
-| 圆形额度浮窗、悬停展开、深浅主题 | 支持 | 支持 |
-| 四边自动隐藏与额度侧签 | 支持 | 此发行版未提供 |
-| 展开面板任意位置左键拖动 | 支持；达到拖动距离后不触发按钮 | 此发行版使用数字区拖动 |
-| 托盘悬停摘要与单击详情卡 | 支持 | 使用 macOS 菜单栏菜单 |
-| Token / 估算金额 / 官方余量下限预算 | 支持 | 此发行版未包含；当前源码另有预算开发内容 |
-| 选择任务、本轮或每轮提醒 | 支持 | 此发行版未提供 |
-| 圆环、侧签与托盘上的任务状态标识 | 支持 | 此发行版未提供 |
-| 统一设置与各界面主题覆盖 | 支持 | 使用此发行版原有界面设置 |
-| 手动刷新 | 请求本地用量和账号额度，分别显示结果 | 请求本地统计；账号额度按独立节奏查询 |
+| 原生界面 | WPF 主面板、系统托盘与浮窗 | AppKit 主面板、菜单栏与浮窗 |
+| Token、趋势、模型／任务筛选、导出 | 支持 | 支持 |
+| 只读账号额度、重置时间与重置卡数量 | 支持 | 支持 |
+| Token、估算金额、官方余量下限预算 | 支持 | 支持 |
+| 本轮／每轮任务提醒、消息历史 | 支持 | 支持 |
+| 圆环、侧签的监控状态与未读标记 | 支持 | 支持 |
+| 连续形变、展开后整窗拖动、方向选择 | 支持 | 支持 |
+| 四边贴合与自动隐藏 | 支持 | 支持 |
+| 两屏相连接缝 | 不停靠，未被邻屏覆盖的边段可用 | 可停靠并自动隐藏；按松手指针选择归属屏幕 |
+| 系统入口详情与命令菜单 | 托盘详情与右键菜单 | 菜单栏原生详情与菜单 |
+| 统一设置、系统主题与界面覆盖 | 支持 | 支持 |
+| 手动刷新 | 本地用量、账号额度分别反馈 | 本地用量、账号额度分别反馈 |
 
-两端共用本地统计解析逻辑，平台界面和系统交互分别实现。Windows 的新布局、贴边与任务监控不会自动出现在旧 macOS 包里。
+两端复用统计解析，系统集成分别实现。通知受权限、勿扰和系统策略影响；本轮结束不代表整个需求已完成。
 
 ## 运行环境
 
-| 平台 | 下载与环境 |
+| 平台 | 环境与边界 |
 | --- | --- |
-| Windows | x64 ZIP；已在 Windows 11 x64 验证。自带 .NET 与 Python，保留完整解压目录即可运行。其他 Windows 版本未作完整兼容性承诺。 |
-| macOS Intel | Intel ZIP；最低构建目标 macOS 11。实体 Intel 启动反馈与验证边界见[验证页](./validation.md)。 |
-| macOS Apple Silicon | Apple Silicon ZIP；也可使用安装助手自动选包。首次打开可能需要系统来源确认。 |
+| Windows x64 | 自带 .NET 与 Python；主要实测 Windows 11。保持完整解压目录。 |
+| macOS Apple Silicon | 自带运行组件，最低构建目标 macOS 11；本轮本机测试为 Apple Silicon。 |
+| macOS Intel | 独立 x86_64 包；已做交叉编译、架构和发行完整性验证，不等于实体 Intel 实机验收。 |
 
-[下载安装 →](./installation.md)
+[下载安装](./installation.md) · [验证范围](./validation.md)
 
-## 源码和发行包的区别
+## 源码来源
 
-当前主线可能包含尚未进入某个平台正式包的代码。macOS 预算源码的存在，不代表 v1.0.1 已带有预算功能；Windows 开发过程中的内部预览版本也不是网站的正式发行编号。
+v1.0.2 的既有标签与 Windows 资产保持不变。新增 macOS 包对应 Release 单独标注的源码提交；包内 `source/` 和 App 的 `Contents/Resources/BUILD-INFO.json` 可用于核对来源。不要把 GitHub 自动生成的旧标签 Source code 当作新增 macOS 包的完整源码。
 
-重现 Windows v1.0.2 应使用对应 tag；重现 macOS v1.0.1 应使用 v1.0.1 tag。开发当前源码时使用新目录入口，详见[开发与发布](./development.md)。
-
-维护者可在[两端对齐清单](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/WINDOWS-MACOS-ALIGNMENT.md)查看迁移项；其中的提案和历史验收记录不能代替当前下载包的功能说明。
+[开发与发布](./development.md) · [两端对齐清单](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/WINDOWS-MACOS-ALIGNMENT.md)

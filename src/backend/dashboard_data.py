@@ -177,6 +177,18 @@ def totals(rows):
     return result
 
 
+class _RefreshStopEvent(threading.Event):
+    """Wake refresh scheduling and request waiters when collection stops."""
+    def __init__(self, condition):
+        super().__init__()
+        self.condition = condition
+
+    def set(self):
+        super().set()
+        with self.condition:
+            self.condition.notify_all()
+
+
 class UsageIndex:
     def __init__(self, home, refresh_seconds=30):
         self.home = Path(home)
@@ -190,13 +202,13 @@ class UsageIndex:
         self.excluded = 0
         self.issues = []
         self.updated = None
-        self.stop = threading.Event()
+        self.refresh_condition = threading.Condition()
+        self.stop = _RefreshStopEvent(self.refresh_condition)
         self.coverage = {}
         self.started_monotonic = time.monotonic()
         self.last_success_monotonic = None
         self.last_progress_monotonic = self.started_monotonic
         self.scanning = False
-        self.refresh_condition = threading.Condition()
         self.refresh_seconds = refresh_seconds
         self.refresh_requested = 0
         self.refresh_completed = 0
@@ -204,6 +216,7 @@ class UsageIndex:
         self.scan_duration_ms = None
         self.metadata_signature = None
         self.aggregate_dirty = True
+        self.on_update = None
 
     def request_refresh(self):
         with self.refresh_condition:
@@ -430,7 +443,7 @@ class UsageIndex:
                     remaining = self.refresh_seconds - (time.monotonic() - finished)
                     if self.refresh_seconds and remaining <= 0:
                         break
-                    self.refresh_condition.wait(min(0.25, max(0.01, remaining)) if self.refresh_seconds else 0.25)
+                    self.refresh_condition.wait(remaining if self.refresh_seconds else None)
                 if self.stop.is_set():
                     return
                 # A request that arrives after this point needs the next scan. It must
@@ -440,6 +453,8 @@ class UsageIndex:
             first = False
             began = time.monotonic()
             error = None
+            if self.on_update is not None:
+                self.on_update(self.health())
             try:
                 self.progress()
                 self.scan()
@@ -455,6 +470,8 @@ class UsageIndex:
                     self.refresh_completed = ticket
                     self.scanning = False
                     self.refresh_condition.notify_all()
+                if self.on_update is not None:
+                    self.on_update(self.health())
 
     def query(self, days="30", model="all", task="all", group="model", now=None, summary_only=False):
         if days not in ("1", "7", "30", "90", "all") or group not in ("model", "task"):

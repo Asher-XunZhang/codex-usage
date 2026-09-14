@@ -106,23 +106,23 @@ let tracking = surface.trackingAreas.first!
 surface.frame.size = CapsuleSurface.large
 surface.updateTrackingAreas()
 precondition(surface.trackingAreas.count == 1 && surface.trackingAreas.first === tracking, "Resizing must keep the same tracking area so mouse exit is not lost")
-let first = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }
-let second = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }
+let first = surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }
+let second = surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }
 precondition(first.count == 2 && first[0] === second[0], "Accessibility identities must remain stable")
 var invoked = ""
 surface.action = { invoked = $0 }
-precondition(first[0].accessibilityPerformPress() && invoked == "details")
+precondition(first[0].accessibilityPerformPress() && invoked == "main")
 state.enabled = false
 surface.expansion = 1
-let expanded = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }
+let expanded = surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }
 let refresh = expanded.first { $0.accessibilityLabel() == "正在刷新" }!
 _ = refresh.accessibilityPerformPress()
-precondition(invoked == "details", "Disabled refresh must not execute")
+precondition(invoked == "main", "Disabled refresh must not execute")
 precondition(expanded.count == 14, "Expanded content, period, themes, and refresh interval must be accessible")
 state.scope = 1; state.rangeDays = "30"
-precondition(surface.accessibilityChildren()!.contains { ($0 as! NSAccessibilityElement).accessibilityLabel() == "浮窗统计范围，30天" }, "Period picker must announce the selected range")
+precondition(surface.accessibilityChildren()!.contains { ($0 as? NSAccessibilityElement)?.accessibilityLabel() == "浮窗统计范围，30天" }, "Period picker must announce the selected range")
 state.refreshSeconds = 0
-precondition(surface.accessibilityChildren()!.contains { ($0 as! NSAccessibilityElement).accessibilityLabel() == "自动刷新间隔，关闭" }, "Refresh interval must announce the actual selected value")
+precondition(surface.accessibilityChildren()!.contains { ($0 as? NSAccessibilityElement)?.accessibilityLabel() == "自动刷新间隔，关闭" }, "Refresh interval must announce the actual selected value")
 precondition(CapsuleTheme(storedValue: "glass") == .light, "Old glass preference migrates to light")
 precondition(CapsuleTheme(storedValue: nil) == .dark)
 precondition(CapsuleTheme(storedValue: "unknown") == .dark)
@@ -137,7 +137,7 @@ for _ in 0..<100 {
     precondition(host.appearance?.name == .darkAqua)
 }
 state.theme = .light
-let light = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }.first { $0.accessibilityLabel() == "浅色主题，已选中" }!
+let light = surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }.first { $0.accessibilityLabel() == "浅色主题，已选中" }!
 precondition(light.accessibilityPerformPress() && invoked == "themeLight", "Theme selection must be exposed to accessibility")
 state.theme = .dark
 state.total = "123.4K"
@@ -145,7 +145,7 @@ surface.expansion = 0
 precondition((surface.accessibilityValue() as? String)?.contains("123.4K") == true)
 precondition(surface.accessibilityChildren()!.count == 2, "Collapsed detail actions must not remain exposed")
 surface.expansion = 1
-let newRefresh = surface.accessibilityChildren()!.map { $0 as! NSAccessibilityElement }.first { $0.accessibilityLabel() == "正在刷新" }!
+let newRefresh = surface.accessibilityChildren()!.compactMap { $0 as? NSAccessibilityElement }.first { $0.accessibilityLabel() == "正在刷新" }!
 precondition(newRefresh !== refresh, "Hidden detail action cache must be released when collapsing")
 surface.expansion = 0
 print("Native animation and accessibility checks passed")

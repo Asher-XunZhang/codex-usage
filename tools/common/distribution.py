@@ -19,7 +19,7 @@ SOURCE_TREES = {
     'src/backend': {'.py'}, 'src/macos': {'.swift', '.c', '.h'},
     'src/windows': {'.cs', '.csproj', '.xaml', '.manifest', '.ico'},
     'tools': {'.py', '.swift', '.sh'}, 'scripts': {'.py', '.swift', '.sh'},
-    'tests': {'.py', '.swift', '.c', '.h'}, 'docs': {'.md', '.png'},
+    'tests': {'.py', '.swift', '.c', '.h'}, 'docs': {'.md', '.png', '.mp4'},
     'integrations': {'.md', '.yaml', '.py'},
 }
 DOCUMENTATION_MANIFESTS = {'docs/windows/images/1.3.1/capture-manifest.json'}
@@ -61,7 +61,7 @@ def regular_files(directory):
 def documentation_files(root):
     root = Path(root)
     return [path for path in regular_files(root / 'docs')
-            if path.suffix in {'.md', '.png'} or path.relative_to(root).as_posix() in DOCUMENTATION_MANIFESTS]
+            if path.suffix in {'.md', '.png', '.mp4'} or path.relative_to(root).as_posix() in DOCUMENTATION_MANIFESTS]
 
 
 def source_files(root):

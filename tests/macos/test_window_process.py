@@ -67,6 +67,25 @@ func closingMessage(_ pid: Int32, at time: TimeInterval) {
     DistributedNotificationCenter.default().postNotificationName(Notification.Name(suite + ".host"), object: suite, userInfo: ["sender": NSNumber(value: pid), "action": "mainClosing", "body": body], deliverImmediately: true)
 }
 switch CommandLine.arguments[1] {
+case "close-refused":
+    let host = host(); host.start(); host.showMain()
+    let app = NSRunningApplication("local.codex-usage.desktop.main", 200); NSWorkspace.shared.complete(app)
+    let main = helper(); main.start()
+    main.actionReceived = { action, _ in if action == "close" { main.sendToHost("closeBlocked", payload: ["message": "草稿未保存"]) } }
+    var result: Bool?
+    host.closeMain { result = $0 }; pump()
+    check(result == false && host.mainIsRunning && !app.isTerminated, "Refused save must not count as process exit")
+    host.showMain()
+    check(app.activations == 1, "Refused close restores the existing window's availability")
+    main.stop(); host.stop()
+case "close-unresponsive":
+    let host = host(); host.start(); host.showMain()
+    let app = NSRunningApplication("local.codex-usage.desktop.main", 200); NSWorkspace.shared.complete(app)
+    var result: Bool?
+    host.closeMain { result = $0 }
+    RunLoop.main.run(until: Date().addingTimeInterval(8.2))
+    check(result == false && host.mainIsRunning && !app.isTerminated && app.terminations == 1, "Timeout must refuse close rather than force-kill unsaved Main")
+    host.stop()
 case "paths":
     let nested = appURL.appendingPathComponent("Contents/Helpers/CodexUsageMain.app")
     check(usageHostBundleURL(bundleURL: nested, isMain: true).path == appURL.path, "Nested helper resources resolve to the real parent app")
@@ -98,13 +117,13 @@ case "launch":
 case "close-reopen":
     let host = host(); var closed = 0, done = 0; host.mainClosed = { closed += 1 }; host.start(); host.showMain()
     let app = NSRunningApplication("local.codex-usage.desktop.main", 200); NSWorkspace.shared.complete(app)
-    host.closeMain { done += 1 }; host.showMain()
+    host.closeMain { success in check(success, "Expected confirmed close"); done += 1 }; host.showMain()
     closingMessage(200, at: ProcessInfo.processInfo.systemUptime)
     check(done == 0 && app.terminations == 1 && app.activations == 0, "Cannot focus a helper that is already exiting")
     NSWorkspace.shared.end(app)
     check(done == 1 && closed == 0 && NSWorkspace.shared.opens.count == 1 && host.mainIsRunning, "Reopen intent launches only after old Main really exited")
     let replacement = NSRunningApplication("local.codex-usage.desktop.main", 201); NSWorkspace.shared.complete(replacement)
-    host.closeMain { done += 1 }; NSWorkspace.shared.end(replacement)
+    host.closeMain { success in check(success, "Expected confirmed close"); done += 1 }; NSWorkspace.shared.end(replacement)
     check(done == 2 && closed == 1 && !host.mainIsRunning, "Quit completion waits for actual Main termination")
     host.stop()
 case "self-close-reopen":
@@ -140,11 +159,11 @@ case "duplicate-main":
     NSWorkspace.shared.end(app); check(closed == 1, "The real Main remains tracked until its own exit")
     host.stop()
 case "pending-close":
-    let host = host(); var done = 0; host.start(); host.showMain(); host.closeMain { done += 1 }
+    let host = host(); var done = 0; host.start(); host.showMain(); host.closeMain { success in check(success, "Expected confirmed close"); done += 1 }
     let app = NSRunningApplication("local.codex-usage.desktop.main", 200); NSWorkspace.shared.complete(app)
     check(done == 0 && app.terminations == 1, "Close during pending open terminates the eventual owned helper")
     NSWorkspace.shared.end(app); check(done == 1, "Pending close completes only after termination")
-    host.showMain(); host.closeMain { done += 1 }; host.showMain()
+    host.showMain(); host.closeMain { success in check(success, "Expected confirmed close"); done += 1 }; host.showMain()
     let oldPending = NSRunningApplication("local.codex-usage.desktop.main", 201); NSWorkspace.shared.complete(oldPending)
     check(oldPending.terminations == 1 && done == 1, "Reopen cannot silently abandon an in-flight close deadline")
     NSWorkspace.shared.end(oldPending)
@@ -178,6 +197,8 @@ print(CommandLine.arguments[1] + " passed")
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_parent_paths(self): self.run_case('paths')
+    def test_refused_close_keeps_main_usable(self): self.run_case('close-refused')
+    def test_unresponsive_close_does_not_force_terminate(self): self.run_case('close-unresponsive')
     def test_ipc_direction_and_release(self): self.run_case('messages')
     def test_launch_failure_focus_and_user_close(self): self.run_case('launch')
     def test_close_then_reopen_intent_waits_for_old_helper_exit(self): self.run_case('close-reopen')

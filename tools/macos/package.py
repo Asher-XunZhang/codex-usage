@@ -15,7 +15,7 @@ from tools.common.distribution import (DOCUMENTS, ROOT_SOURCES, SOURCE_TREES, DO
                                        PRIVATE_SUFFIXES, PRIVATE_NAMES, check_path, regular_files,
                                        documentation_files, source_files)
 
-VERSION = '1.0.1'
+VERSION = '1.0.2'
 RELEASES = [('AppleSilicon', 'arm64'), ('Intel', 'x86_64')]
 
 

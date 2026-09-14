@@ -45,7 +45,7 @@ final class WindowProcessCoordinator {
     private var closeGeneration = 0
     private var started = false
     private var launchGeneration = 0
-    private var closeCallbacks: [() -> Void] = []
+    private var closeCallbacks: [(Bool) -> Void] = []
     private var closeDeadline: DispatchWorkItem?
     var mainIsRunning: Bool { openPending || running.map { !$0.isTerminated } == true }
     var mainPID: Int32? { running.flatMap { $0.isTerminated ? nil : $0.processIdentifier } }
@@ -109,6 +109,10 @@ final class WindowProcessCoordinator {
         preferences.synchronize()
         if state { stateReceived?(payload) }
         else if let action = info["action"] as? String, action.count <= 80 {
+            if !isMain && action == "closeBlocked", running?.processIdentifier == sender.int32Value {
+                closing = false; wanted = true; finishClose(success: false)
+                launchFailed?(payload["message"] as? String ?? "主面板尚有未保存内容"); return
+            }
             if !isMain && action == "mainClosing", running?.processIdentifier == sender.int32Value {
                 if !closing {
                     closing = true
@@ -156,8 +160,8 @@ final class WindowProcessCoordinator {
             }
         }
     }
-    func closeMain(completion: (() -> Void)? = nil) {
-        guard !isMain else { completion?(); return }
+    func closeMain(completion: ((Bool) -> Void)? = nil) {
+        guard !isMain else { completion?(true); return }
         if let completion = completion { closeCallbacks.append(completion) }
         wanted = false
         guard mainIsRunning else { closing = false; finishClose(); return }
@@ -166,19 +170,17 @@ final class WindowProcessCoordinator {
         closeDeadline?.cancel()
         let deadline = DispatchWorkItem { [weak self] in
             guard let self = self, self.closeGeneration == ticket else { return }
-            if let app = self.running, !app.isTerminated { app.forceTerminate() }
-            // Normal completion comes from the real workspace termination event.
-            // If the OS refuses to report it, do not block the host's Quit forever.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                guard let self = self, self.closeGeneration == ticket else { return }; self.finishClose()
-            }
+            if let app = self.running, !app.isTerminated {
+                self.closing = false; self.wanted = true; self.finishClose(success: false)
+                self.launchFailed?("主面板未确认保存和关闭，请重试。")
+            } else { self.closing = false; self.finishClose() }
         }
         closeDeadline = deadline; DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: deadline)
     }
-    private func finishClose() {
+    private func finishClose(success: Bool = true) {
         closeGeneration += 1
         closeDeadline?.cancel(); closeDeadline = nil
-        let callbacks = closeCallbacks; closeCallbacks = []; callbacks.forEach { $0() }
+        let callbacks = closeCallbacks; closeCallbacks = []; callbacks.forEach { $0(success) }
     }
     func stop() {
         guard started else { return }

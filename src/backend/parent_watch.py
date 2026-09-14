@@ -1,5 +1,9 @@
-"""Wait for the original parent's identity, including Windows handle semantics."""
+"""Wait for the original parent and local cancellation using native events."""
+import errno
+from contextlib import closing
 import os
+import select
+import sys
 import threading
 import weakref
 
@@ -52,15 +56,73 @@ class _WindowsStopEvent:
                 self.handle = None
 
 
-class ParentMonitor:
-    """Own the Windows stop handle and waiter for one worker lifetime.
+class _MacOSStopEvent:
+    """One-way Event with a readable pipe for process and HTTP waits.
 
-    Assign the yielded monitor.stop before installing signal handlers or starting
-    worker threads, then call start(). Unix callers keep their original Event.
+    The byte stays unread so every waiter observes cancellation. The context
+    owner closes the pipe only after the HTTP loop and process waiter finish.
+    """
+    def __init__(self, event):
+        self.event = event
+        self.lock = threading.RLock()
+        self.read_fd, self.write_fd = os.pipe()
+        self.notified = False
+        self.finalizer = weakref.finalize(self, self._close_pipe, self.read_fd, self.write_fd)
+        self.finalizer.atexit = False
+        try:
+            os.set_blocking(self.read_fd, False)
+            os.set_blocking(self.write_fd, False)
+            if event.is_set():
+                self.set()
+        except BaseException:
+            self.close()
+            raise
+
+    @staticmethod
+    def _close_pipe(read_fd, write_fd):
+        try:
+            os.close(read_fd)
+        finally:
+            os.close(write_fd)
+
+    def fileno(self):
+        return self.read_fd
+
+    def is_set(self):
+        return self.event.is_set()
+
+    def wait(self, timeout=None):
+        return self.event.wait(timeout)
+
+    def set(self):
+        with self.lock:
+            self.event.set()
+            if self.write_fd is not None and not self.notified:
+                try:
+                    os.write(self.write_fd, b'\0')
+                except BlockingIOError:
+                    pass  # A full pipe already signals cancellation.
+                self.notified = True
+
+    def close(self):
+        with self.lock:
+            if self.write_fd is not None:
+                self.finalizer()
+                self.read_fd = self.write_fd = None
+
+
+class ParentMonitor:
+    """Own native cancellation resources and a waiter for one worker lifetime.
+
+    Assign monitor.stop before installing signal handlers or starting workers.
+    macOS also needs the pipe without a parent, for signal-driven HTTP shutdown.
+    Other Unix platforms keep the original Event and polling fallback.
     """
     def __init__(self, parent_pid, stop, *, compact=False):
-        self.native = os.name == 'nt' and parent_pid is not None
-        self.stop = _WindowsStopEvent(stop) if self.native else stop
+        self.windows = os.name == 'nt' and parent_pid is not None
+        self.native = self.windows or sys.platform == 'darwin'
+        self.stop = (_WindowsStopEvent(stop) if self.windows else
+                     _MacOSStopEvent(stop) if sys.platform == 'darwin' else stop)
         self.target = watch_compact_parent if compact else watch_parent
         self.parent_pid = parent_pid
         self.thread = (threading.Thread(target=self._run, daemon=True)
@@ -71,7 +133,7 @@ class ParentMonitor:
         try:
             self.target(self.parent_pid, self.stop)
         finally:
-            if self.native:
+            if self.windows:
                 self.stop.close()
 
     def __enter__(self):
@@ -84,21 +146,63 @@ class ParentMonitor:
 
     def __exit__(self, *_):
         if self.native:
+            joined = False
             try:
                 self.stop.set()
-                if self.thread.ident is not None:
+                if self.thread is not None and self.thread.ident is not None:
                     self.thread.join()
+                    joined = True
             finally:
                 # Never close a handle while WaitForMultipleObjects uses it.
                 # An interrupted start can have created a thread not yet given
                 # an ident. That thread closes its own handle; if creation
                 # failed entirely, finalization reclaims the unborrowed handle.
-                if not self.start_attempted:
+                # macOS shares its pipe with the HTTP loop, so the waiter must
+                # not close it. An interrupted start with no ident leaves GC
+                # ownership until the thread (if created) releases the monitor.
+                if (not self.start_attempted or
+                        (not self.windows and (self.thread is None or joined))):
                     self.stop.close()
 
 
+def _watch_macos_parent(parent_pid, stop):
+    if stop.is_set():
+        return
+    try:
+        if os.getppid() != parent_pid:
+            stop.set()
+            return
+        with closing(select.kqueue()) as queue:
+            queue.control([
+                select.kevent(parent_pid, filter=select.KQ_FILTER_PROC,
+                              flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                              fflags=select.KQ_NOTE_EXIT),
+                select.kevent(stop.fileno(), filter=select.KQ_FILTER_READ,
+                              flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT),
+            ], 0, 0)
+            # Close the check/register race, including reuse of the old PID.
+            if os.getppid() != parent_pid:
+                stop.set()
+                return
+            while not stop.is_set():
+                for event in queue.control(None, 2, None):
+                    if event.flags & select.KQ_EV_ERROR:
+                        raise OSError(event.data, os.strerror(event.data))
+                    if (event.filter == select.KQ_FILTER_READ or
+                            (event.filter == select.KQ_FILTER_PROC and event.fflags & select.KQ_NOTE_EXIT)):
+                        stop.set()
+                        return
+    except OSError as error:
+        stop.set()
+        if error.errno != errno.ESRCH:  # Parent can exit while registering.
+            raise
+    except BaseException:
+        stop.set()
+        raise
+
+
 def watch_parent(parent_pid, stop):
-    """Watch the dashboard worker; preserve its Unix half-second cadence."""
+    """Watch the dashboard worker; polling is only a non-native fallback."""
     if os.name == 'nt':
         import ctypes
         from ctypes import wintypes
@@ -125,6 +229,8 @@ def watch_parent(parent_pid, stop):
         finally:
             if handle:
                 kernel.CloseHandle(handle)
+    elif isinstance(stop, _MacOSStopEvent):
+        _watch_macos_parent(parent_pid, stop)
     else:
         while not stop.is_set():
             if os.getppid() != parent_pid:
@@ -134,8 +240,8 @@ def watch_parent(parent_pid, stop):
 
 
 def watch_compact_parent(parent_pid, stop):
-    """Unix compact scans wait before polling; Windows retains handle ownership."""
-    if os.name == 'nt':
+    """Bounded scans share native waits; other Unix keeps its short fallback."""
+    if os.name == 'nt' or isinstance(stop, _MacOSStopEvent):
         watch_parent(parent_pid, stop)
         return
     while not stop.wait(0.2):

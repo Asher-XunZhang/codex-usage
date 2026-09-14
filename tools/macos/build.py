@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Build an offline, universal AppKit application with local Apple command line tools."""
 import argparse
+import hashlib
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import plistlib
@@ -34,6 +36,12 @@ def checked_build_path(path, *, allow_container=False):
 def run(*args):
     subprocess.run([str(arg) for arg in args], check=True)
 
+def source_fingerprints():
+    paths = [path for path in (ROOT / 'src').rglob('*') if path.is_file() and path.suffix in ('.swift', '.c', '.h', '.py') and '__pycache__' not in path.parts]
+    paths.extend([ROOT / 'tools/macos/build.py', ROOT / 'tools/common/paths.py'])
+    return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
+
+
 def main(argv=None, *, legacy=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--runtime-source', type=Path, default=None,
@@ -55,6 +63,9 @@ def main(argv=None, *, legacy=False):
         runtimes[entry['file']] = runtime
     if not (vendor / 'third-party-licenses').is_dir() or not (vendor / 'THIRD-PARTY.md').is_file():
         raise SystemExit('Runtime source is missing third-party license files')
+    fingerprints = source_fingerprints()
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
     build = ROOT / 'build' if legacy else ROOT / 'build/macos'
     app = build / 'Codex用量.app' if legacy and args.arch == 'universal' else build / args.arch / 'Codex用量.app'
     checked_build_path(build, allow_container=True)
@@ -91,8 +102,9 @@ def main(argv=None, *, legacy=False):
         run('xcrun', 'swiftc', '-swift-version', '5', '-Osize', '-whole-module-optimization',
             '-sdk', sdk, '-target', target, '-module-cache-path', build / 'module-cache',
             '-import-objc-header', macos_source('UsageNative.h'), source_dir / 'main.swift',
-            *[macos_source(name) for name in ['Main.swift', 'Chart.swift', 'Capsule.swift',
-              'CapsuleHost.swift', 'StatusMenu.swift', 'Quota.swift', 'Runtime.swift', 'WindowProcess.swift', 'UsageChangeMonitor.swift', 'Termination.swift', 'BudgetCore.swift', 'ControlFeedback.swift', 'BudgetUI.swift', 'BudgetHost.swift']],
+            *[macos_source(name) for name in ['Main.swift', 'MainState.swift', 'Settings.swift', 'UpdateStatus.swift', 'Chart.swift', 'Capsule.swift',
+              'TaskMonitorCore.swift', 'TaskLogReader.swift', 'TaskMonitorService.swift', 'TaskMonitorUI.swift', 'TaskMonitorHost.swift', 'NotificationRouter.swift',
+              'CapsuleHost.swift', 'CapsulePlacement.swift', 'CapsuleDocking.swift', 'StatusDetail.swift', 'StatusMenu.swift', 'Quota.swift', 'BackendEvents.swift', 'Runtime.swift', 'WindowProcess.swift', 'UsageChangeMonitor.swift', 'Termination.swift', 'BudgetCore.swift', 'ControlFeedback.swift', 'BudgetUI.swift', 'BudgetHost.swift']],
             native, '-o', stage / 'CodexUsage.bin')
         run('xcrun', 'swiftc', '-swift-version', '5', '-Osize', '-sdk', sdk, '-target', target,
             macos_source('QuotaHelper.swift'), '-o', stage / 'CodexQuota.bin')
@@ -118,11 +130,17 @@ def main(argv=None, *, legacy=False):
     info = {
         'CFBundleName': 'Codex 用量', 'CFBundleDisplayName': 'Codex 用量',
         'CFBundleExecutable': 'CodexUsage', 'CFBundleIdentifier': 'local.codex-usage.desktop',
-        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.1', 'CFBundleVersion': '101',
+        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.2', 'CFBundleVersion': '102',
         'CFBundleIconFile': 'AppIcon', 'LSMinimumSystemVersion': '11.0', 'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication', 'NSHumanReadableCopyright': 'Independent local usage tool. Not affiliated with OpenAI.',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     }
+    if source_fingerprints() != fingerprints:
+        raise SystemExit('Source inputs changed during compilation; rebuild this candidate before installation')
+    build_info = {'revision': revision, 'dirty': dirty, 'architecture': args.arch,
+                  'builtAt': datetime.now(timezone.utc).isoformat(), 'sources': fingerprints,
+                  'sourceDigest': hashlib.sha256(json.dumps(fingerprints, sort_keys=True).encode()).hexdigest()}
+    (resources / 'BUILD-INFO.json').write_text(json.dumps(build_info, indent=2, ensure_ascii=False) + '\n')
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
     # A distinct bundle identity prevents Launch Services from reopening the host.
     # Both roles share the compiled code; the helper reads data/runtime resources

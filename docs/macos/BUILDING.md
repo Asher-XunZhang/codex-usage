@@ -63,7 +63,9 @@ python3 -m tools.macos.verify_release
 
 构建使用 ad hoc 签名，没有 Developer ID 身份认证或 Apple 公证。应用自身不移除隔离属性；可选的 [`scripts/install.sh`](https://github.com/Asher-XunZhang/codex-usage/blob/main/scripts/install.sh) 在用户明确确认后，对固定发布包校验 SHA-256 与签名完整性，再仅移除新安装这份 App 的隔离属性。它不改变系统全局安全设置。安装流程和限制见 [安装指南](INSTALL.md)。
 
-v1.0.1 的独立安装助手随 Release 发布，固定使用本版两种架构 ZIP 及各自的 SHA-256，不自动追踪 `latest`；既有版本的发布资产保持不变。发布新版本时，先定稿、验收并上传两个架构的 ZIP，再根据实际上传资产的摘要，更新 `main` 安装助手中的固定版本、资产名和预期 SHA-256；不要只替换下载 URL 或将运行时从同一下载位置取回的摘要当作固定校验值。下载摘要和 ad hoc 签名完整性不等于发布者身份认证。
+v1.0.2 的独立安装助手随 Release 发布，固定使用本版两种架构 ZIP 及各自的 SHA-256，不自动追踪 `latest`；既有版本的发布资产保持不变。发布新版本时，先定稿并验收两个架构的 ZIP，再根据最终资产的摘要，更新安装助手中的固定版本、资产名和预期 SHA-256，上传后核对远端摘要；不要只替换下载 URL 或将运行时从同一下载位置取回的摘要当作固定校验值。下载摘要和 ad hoc 签名完整性不等于发布者身份认证。
+
+v1.0.2 是在已有 Windows Release 中补充 macOS 包，保留原标签与 Windows 资产。macOS 源码使用 Release 单独标注的提交与 ZIP 的 `source/` 快照；`BUILD-INFO.json` 记录编译提交和源码摘要，验证器核对实际源码字节。打包前提交源码并构建，ZIP 定稿后再用独立提交更新安装器摘要，避免自引用。
 
 ZIP 内的 `source/` 是打包时的源码快照，其中的安装助手可能仍指向旧版本，具体以该脚本的 `--help` 输出为准。不要为了回写 ZIP 自身的摘要而再次打包、覆盖已发布的同名 ZIP：这会改变摘要、形成自引用，并使已有安装助手的固定校验失效。v1.0.1 的 `install.sh` 及 `install.sh.sha256` 在最终 ZIP 确定后生成，作为独立 Release 资产上传，并同步到 `main`；源码 tag 和已发布 ZIP 不再改写。README 的安装入口指向该独立资产。
 

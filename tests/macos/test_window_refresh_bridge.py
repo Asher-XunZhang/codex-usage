@@ -51,6 +51,13 @@ final class Worker {
 }
 final class Quota { func refresh(force: Bool) {} }
 final class Fixture {
+    func receiveTaskMonitorAction(_ action: String, payload: Object) -> Bool { false }
+    func showSettingsPage(_ page: String) {}
+    func sendTaskMonitorRoute() {}
+    var localUpdate: Object = [:], hostSettingsError = ""
+    var manualExpectedStamp: String?
+    func updateRefreshStatus() {}; func retrySettings() {}; func showUpdateStatus() {}
+    func reportLocalUpdate(busy: Bool, error: String? = nil, stamp: String? = nil) {}
     func receiveBudgetAction(_ action: String, payload: Object) -> Bool { false }
     func sendBudgetRoute() {}
     func budgetSourceChanged() {}
@@ -68,6 +75,7 @@ final class Fixture {
     func finishRefreshing() { pendingRefresh = nil; capsuleState.enabled = true; capsuleState.indicator = "refresh" }
     func fetchCompact(manual: Bool) { scans += 1 }
     func manualRefresh() { manuals += 1; pendingRefresh = 5 }
+    func refreshLocal() { manualRefresh() }
     func applyInterval(_ seconds: Int, refreshAfterChange: Bool) {}
     func poll() { polls += 1 }
     func alert(_ title: String, _ message: String) { alerts += 1 }

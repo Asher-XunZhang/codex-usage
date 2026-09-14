@@ -101,6 +101,21 @@ class BudgetCoreTests(unittest.TestCase):
         self.assertNotIn('error', response)
         return response['requests'][0] if response['requests'] else response
 
+    def test_corrupt_config_recovery_preserves_bytes_and_requires_confirmation(self):
+        damaged = b'{ damaged budget document\n\x00'
+        self.path.write_bytes(damaged)
+        responses = self.run_commands(apply(), apply('recover', {'confirm': False}))
+        self.assertTrue(all('error' in item for item in responses))
+        self.assertEqual(self.path.read_bytes(), damaged)
+        self.assertEqual(list(self.path.parent.glob('*.damaged-*')), [])
+        response = self.run_commands(apply('recover', {'confirm': True}))[0]
+        self.assertNotIn('error', response)
+        backups = list(self.path.parent.glob('*.damaged-*'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), damaged)
+        self.assertEqual(json.loads(self.path.read_text())['rules'], [])
+        self.create()
+
     def evaluate(self, result=None, now=NOW, **values):
         return self.run_commands(dict(op='evaluate', result=result, now=now, **values))[0]
 
@@ -203,6 +218,11 @@ class BudgetCoreTests(unittest.TestCase):
         self.assertEqual(result['summaries'][0]['status'], 'partial')
         self.assertAlmostEqual(result['summaries'][0]['used'], 12.6)
         self.assertIsNone(result['summaries'][0]['remaining'])
+        diagnostic = result['summaries'][0]['priceDiagnostics'][0]
+        self.assertEqual(diagnostic['model'], 'unknown')
+        self.assertEqual(set(diagnostic['missingPrices']), {'input', 'cachedInput', 'output'})
+        self.assertFalse(diagnostic['cacheClassificationUnknown'])
+        self.assertTrue(result['summaries'][0]['knownAmountIsLowerBound'])
 
     def test_missing_cache_split_cannot_be_treated_as_full_price_input(self):
         prices = [dict(model='m', input=2, cachedInput=0.5, output=10)]

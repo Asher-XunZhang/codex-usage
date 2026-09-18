@@ -1,6 +1,6 @@
 # 故障排查
 
-先确认平台与版本：Windows 当前下载为 v1.0.2，macOS 为 v1.0.2。首次运行步骤见[安装指南](./installation.md)。
+先确认平台与版本：Windows 当前下载为 v1.0.2，macOS 为 v1.0.3。首次运行步骤见[安装指南](./installation.md)。
 
 ## Windows 无法打开或找不到入口 {#windows-startup}
 
@@ -43,7 +43,7 @@
 
 一个 Intel/macOS **15.7.9 (24G830)** 案例中，主程序确认为 `x86_64`，执行权限和 App 签名完整性均正常，但终端启动报 `Operation not permitted`。用户移除该 App 的隔离属性后确认能够打开。这支持“此次启动被隔离触发的执行检查阻止”，不代表所有 Intel 启动失败都具有相同原因。
 
-推荐先检查下载包是否匹配芯片，确认从[正式发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2)下载了原始 Intel ZIP。再按照[安装指南](./installation.md)尝试系统“仍要打开”或快捷安装助手；已有 App 先按迁移步骤处理。
+推荐先检查下载包是否匹配芯片，确认从[正式发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.3)下载了原始 Intel ZIP。再按照[安装指南](./installation.md)尝试系统“仍要打开”或快捷安装助手；已有 App 先按迁移步骤处理。
 
 下载渠道也可能影响隔离标记。Apple 记录过某些下载助手生成的特殊标记阻止已经签名、公证的应用执行的案例。让接收者通过 Safari 直接下载原始发行 ZIP，有助于排除中间传输工具引入的情况，但不会使本项目自动获得公证。[Apple 技术讨论](https://developer.apple.com/forums/thread/767612)
 
@@ -78,13 +78,13 @@ spctl --assess --type execute --verbose=2 "$usage_app"
 | 提示 | 下一步 |
 | --- | --- |
 | 已有 App，未覆盖 | 先退出并移走旧 App，或指定独立测试目录；无需删除 Codex 数据 |
-| 安装包校验失败 | 使用对应架构的原始 v1.0.2 ZIP，不能重新压缩或使用 Source code 包 |
+| 安装包校验失败 | 使用对应架构的原始 v1.0.3 ZIP，不能重新压缩或使用 Source code 包 |
 | 没有交互终端 | 在 macOS「终端」中先下载脚本到文件，再用 `/bin/bash` 执行 |
 | 不要使用 sudo | 以当前用户运行，使用 `~/Applications` 或其他可写目录 |
 | 下载失败 | 检查网络，或预先下载 ZIP 后使用 `--archive` |
 | 安装锁目录已存在 | 确认另一个安装已结束；若上次被强行中止，再删除提示的空锁目录重试 |
 
-安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 于 2026-09-11 合并到 `main`。当前助手下载 v1.0.2 App；版本更新不代表新增 Apple 公证，也不代表所有实体 Intel 设备均已验收。
+安装助手已通过 [PR #1](https://github.com/Asher-XunZhang/codex-usage/pull/1) 于 2026-09-11 合并到 `main`。当前助手下载 v1.0.3 App；版本更新不代表新增 Apple 公证，也不代表所有实体 Intel 设备均已验收。
 
 ## 没有统计、数字没变或额度为“—”
 
@@ -111,4 +111,4 @@ spctl --assess --type execute --verbose=2 "$usage_app"
 
 ## 为什么安装后圆弧仍是绿色
 
-先确认 App 已更新到 v1.0.2；v1.0.0 使用固定绿色。v1.0.2 在高剩余额度时仍显示绿色，额度降低后才逐渐转黄、橙、红；颜色对应账号额度，并不由筛选后的 Token 数决定。具体规则见[额度弧线配色](./user-guide.md#额度弧线配色)。
+v1.0.3 可在「弧线配色…」选择单色或随额度渐变；单色不会随额度改变。内置渐变在高剩余额度时显示绿色，额度降低后逐渐转黄、橙、红。颜色对应账号额度，不由筛选后的 Token 数决定。具体规则见[额度弧线配色](./user-guide.md#额度弧线配色)。

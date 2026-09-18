@@ -28,6 +28,7 @@ MACOS_SOURCES = {
     'BudgetHost.swift': 'Features/Budgets/BudgetHost.swift',
     'BudgetUI.swift': 'Features/Budgets/BudgetUI.swift',
     'Capsule.swift': 'Features/Floating/Capsule.swift',
+    'ArcColorEditor.swift': 'Features/Floating/ArcColorEditor.swift',
     'CapsulePlacement.swift': 'Features/Floating/CapsulePlacement.swift',
     'CapsuleDocking.swift': 'Features/Floating/CapsuleDocking.swift',
     'TaskMonitorCore.swift': 'Features/TaskMonitor/TaskMonitorCore.swift',

@@ -85,7 +85,14 @@ case "edges":
         check(CapsulePlacement.dockingEdge(compact: compact, screen: screen) == edge, "all four docking edges")
         let tab = CapsulePlacement.tab(compact: compact, edge: edge, work: work)
         check(work.contains(tab), "tab avoids menu bar and Dock")
-        check(tab.size == (edge == .left || edge == .right ? CGSize(width: 36, height: 76) : CGSize(width: 80, height: 32)), "side tabs are vertical; top and bottom tabs preserve readable horizontal numbers")
+        let monitored = CapsulePlacement.tab(compact: compact, edge: edge, work: work, showsMonitor: true)
+        check(work.contains(monitored), "monitor growth remains on owning screen")
+        if edge == .left || edge == .right {
+            check(monitored.midY == tab.midY && monitored.height > tab.height && monitored.width == tab.width, "vertical content grows about its anchor")
+        } else {
+            check(monitored.midX == tab.midX && monitored.width > tab.width && monitored.height == tab.height, "horizontal content grows about its anchor")
+        }
+        check(tab.size == (edge == .left || edge == .right ? CGSize(width: 44, height: 68) : CGSize(width: 88, height: 28)), "side tabs are vertical; top and bottom tabs preserve readable horizontal numbers")
     }
     let pill = CGRect(x: work.minX, y: work.maxY - 44, width: 136, height: 44)
     let detail = CapsulePlacement.resolve(compact: pill, work: work)

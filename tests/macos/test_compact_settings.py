@@ -27,12 +27,14 @@ let usagePreferences = UserDefaults(suiteName: suite)!
 defer { usagePreferences.removePersistentDomain(forName: suite) }
 typealias Object = [String: Any]
 enum CapsuleTheme: String { case dark, light }
+final class ArcColorEditor { func updateTheme(_ theme: CapsuleTheme) {} }
 final class State { var theme = CapsuleTheme.light, refreshSeconds = 5 }
 final class Cancel { var cancelled = false; func cancel() { cancelled = true } }
 final class Backend { var url: URL?, stopping = false }
 final class Collector { var busy = false, stopping = false }
 final class Monitor { var isWatching = true }
 final class Fixture {
+    var arcColorEditor: ArcColorEditor?
     let settingsQueue = MainSettingsQueue()
     let capsuleState = State(), backend = Backend(), collector = Collector(), compactMonitor = Monitor()
     var autoSeconds = 5 { didSet { capsuleState.refreshSeconds = autoSeconds } }

@@ -18,7 +18,7 @@ import uuid
 
 
 SOURCES = [
-    "Main.swift", "MainState.swift", "Settings.swift", "UpdateStatus.swift", "Chart.swift", "Capsule.swift", "CapsuleHost.swift",
+    "Main.swift", "MainState.swift", "Settings.swift", "UpdateStatus.swift", "Chart.swift", "Capsule.swift", "ArcColorEditor.swift", "CapsuleHost.swift",
     "CapsulePlacement.swift", "CapsuleDocking.swift", "TaskMonitorCore.swift", "TaskLogReader.swift", "TaskMonitorService.swift",
     "TaskMonitorUI.swift", "TaskMonitorHost.swift", "NotificationRouter.swift",
     "StatusDetail.swift", "StatusMenu.swift", "Quota.swift", "BackendEvents.swift", "Runtime.swift", "WindowProcess.swift",

@@ -87,8 +87,10 @@ struct CapsulePlacement: Equatable {
         return result
     }
 
-    static func tab(compact: CGRect, edge: CapsuleDockEdge, work: CGRect) -> CGRect {
-        let size = edge == .left || edge == .right ? CGSize(width: 36, height: 76) : CGSize(width: 80, height: 32)
+    static func tab(compact: CGRect, edge: CapsuleDockEdge, work: CGRect, showsMonitor: Bool = false) -> CGRect {
+        let size = edge == .left || edge == .right
+            ? CGSize(width: 44, height: showsMonitor ? 96 : 68)
+            : CGSize(width: showsMonitor ? 124 : 88, height: 28)
         let centered = CGRect(x: compact.midX - size.width / 2, y: compact.midY - size.height / 2, width: size.width, height: size.height)
         return docked(centered, edge: edge, work: work)
     }

@@ -17,6 +17,7 @@ final class CapsuleDocking {
     private var animation: CapsuleAnimation?
     private var generation = 0
     private var targetTab = false
+    private var contentUpdatePending = false
     private var awaitingMotion: NSPoint?
     private var suppressUntilExit = false
     private var suppressionPointer = NSPoint.zero
@@ -36,6 +37,15 @@ final class CapsuleDocking {
         // Legacy origin migration is deliberately free, even if it touches an
         // edge. Upgrading must not hide a previously visible window immediately.
         persist()
+        surface.dockedContentChanged = { [weak self] in
+            guard let self = self, !self.contentUpdatePending else { return }
+            self.contentUpdatePending = true
+            // Coalesce the individual assignments of one monitor refresh.
+            DispatchQueue.main.async { [weak self] in
+                self?.contentUpdatePending = false
+                self?.refreshTabSize()
+            }
+        }
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in self?.reconcileScreen() })
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.activeSpaceDidChangeNotification] {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.reconcileScreen() })
@@ -139,12 +149,19 @@ final class CapsuleDocking {
         }
         delay = work; DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
+    private func refreshTabSize() {
+        guard targetTab, animation == nil, let edge = edge, let panel = panel, panel.isVisible,
+              let surface = surface, !surface.state.interactionActive,
+              let screen = CapsulePlacement.screen(for: compact, screens: Self.screens()) else { return }
+        let target = CapsulePlacement.tab(compact: compact, edge: edge, work: screen.visibleFrame, showsMonitor: surface.state.showsDockedMonitor)
+        if panel.frame != target { transition(tab: true) }
+    }
     private func transition(tab: Bool, completed: (() -> Void)? = nil) {
         guard let panel = panel, let surface = surface,
               let screen = CapsulePlacement.screen(for: compact, screens: Self.screens()) else { return }
         cancel(); let ticket = generation; targetTab = tab
         if tab { suppressUntilExit = false }
-        let target = tab && edge != nil ? CapsulePlacement.tab(compact: compact, edge: edge!, work: screen.visibleFrame) : compact
+        let target = tab && edge != nil ? CapsulePlacement.tab(compact: compact, edge: edge!, work: screen.visibleFrame, showsMonitor: surface.state.showsDockedMonitor) : compact
         let from = panel.frame, fraction = surface.docking
         surface.dockEdge = edge?.rawValue
         let apply: (CGFloat) -> Void = { [weak self, weak panel, weak surface] progress in
@@ -154,7 +171,7 @@ final class CapsuleDocking {
             surface.docking = mix(fraction, tab ? 1 : 0)
             panel.setFrame(NSRect(x: mix(from.minX, target.minX), y: mix(from.minY, target.minY), width: mix(from.width, target.width), height: mix(from.height, target.height)), display: true)
             self.movingFrame = false
-            if progress >= 1 { self.animation = nil; completed?() }
+            if progress >= 1 { self.animation = nil; completed?(); if tab { self.refreshTabSize() } }
         }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { apply(1); return }
         let animation = CapsuleAnimation(duration: tab ? 0.22 : 0.16, animationCurve: .easeInOut)

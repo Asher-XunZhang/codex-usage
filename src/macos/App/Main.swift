@@ -250,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let settingsQueue = MainSettingsQueue()
     var updateStatusController: UpdateStatusController?
     var usageSettings: UsageSettingsController?
+    var arcColorEditor: ArcColorEditor?
     var appearanceObservation: NSKeyValueObservation?
     var localUpdate: Object = [:]
     var hostSettingsError = ""
@@ -326,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         capsuleState.theme = CapsuleTheme(storedValue: usagePreferences.string(forKey: "capsuleTheme"))
+        capsuleState.arcStyle = CapsuleArcStyle.load(usagePreferences).style
         capsuleState.refreshSeconds = autoSeconds
         capsuleState.scope = 1
         capsuleState.rangeDays = floatingDays
@@ -467,6 +469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         usagePreferences.synchronize()
         switch action {
         case "settingsWindow": showSettingsPage(payload["page"] as? String ?? "appearance")
+        case "arcColors": showArcColors()
         case "updateStatus": showUpdateStatus()
         case "localUpdate":
             guard payload["source"] as? String == codexHome.standardizedFileURL.path else { return }
@@ -630,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func applyCapsuleTheme(_ theme: CapsuleTheme) {
         capsuleState.theme = theme
+        arcColorEditor?.updateTheme(theme)
         if !applyingHostState { usagePreferences.set(theme.rawValue, forKey: "capsuleTheme"); usagePreferences.set(theme.rawValue, forKey: "appearanceFloating") }
         updateCapsuleThemeChecks(NSApp.mainMenu); updateCapsuleThemeChecks(statusMenu)
         if isMainWindowProcess {
@@ -644,6 +648,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             if let submenu = row.submenu { updateCapsuleThemeChecks(submenu) }
         }
+    }
+
+    @objc func showArcColors() {
+        if isMainWindowProcess { sendHost("arcColors"); return }
+        if let editor = arcColorEditor, editor.window?.isVisible == true {
+            editor.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return
+        }
+        let stored = CapsuleArcStyle.load(usagePreferences)
+        let editor = ArcColorEditor(style: capsuleState.arcStyle, theme: capsuleState.theme,
+                                    fraction: capsuleState.normalizedQuota, warning: stored.error)
+        arcColorEditor = editor
+        editor.preview = { [weak self] style in self?.capsuleState.arcStylePreview = style }
+        editor.save = { [weak self] style in
+            guard let self = self, !self.terminating else { return "应用正在退出，配色未保存。" }
+            if let error = style.save(usagePreferences) { return error }
+            self.capsuleState.arcStyle = style
+            return nil
+        }
+        editor.closed = { [weak self, weak editor] in
+            DispatchQueue.main.async {
+                guard let self = self, self.arcColorEditor === editor else { return }
+                self.arcColorEditor = nil
+            }
+        }
+        editor.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
     }
     func buildWindow() {
         guard isMainWindowProcess, dashboard == nil else { return }
@@ -1212,6 +1241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 case "themeLight": self.applyCapsuleTheme(.light)
                 case "updates": self.showUpdateStatus()
                 case "settings": self.showSettings()
+                case "arcColors": self.showArcColors()
                 case "interval:custom": self.statusCustomInterval()
                 default:
                     if action.hasPrefix("interval:"), let seconds = Int(action.dropFirst("interval:".count)) { self.applyInterval(seconds) }
@@ -2028,6 +2058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             usagePreferences.synchronize()
         } else { mainWindowOpen = false; persistHostWindowMode() }
         terminating = true; stopCompactMonitoring(); resetFloatInteraction()
+        arcColorEditor?.close(); arcColorEditor = nil; capsuleState.arcStylePreview = nil
         hostRefreshDeadline?.cancel(); hostRefreshDeadline = nil
         stopFloatMouseMonitoring(); statusSingleClick?.cancel(); manualTimer?.invalidate(); timer?.invalidate(); request?.cancel(); floatingRequest?.cancel(); summaryRequest?.cancel(); refreshCommand?.cancel(); settingsCommand?.cancel(); activeSession?.invalidateAndCancel()
         compactTimer?.invalidate(); floatCollapse?.cancel(); floatAnimation?.stop(); trimWork?.cancel()

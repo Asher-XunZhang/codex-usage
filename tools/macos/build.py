@@ -102,7 +102,7 @@ def main(argv=None, *, legacy=False):
         run('xcrun', 'swiftc', '-swift-version', '5', '-Osize', '-whole-module-optimization',
             '-sdk', sdk, '-target', target, '-module-cache-path', build / 'module-cache',
             '-import-objc-header', macos_source('UsageNative.h'), source_dir / 'main.swift',
-            *[macos_source(name) for name in ['Main.swift', 'MainState.swift', 'Settings.swift', 'UpdateStatus.swift', 'Chart.swift', 'Capsule.swift',
+            *[macos_source(name) for name in ['Main.swift', 'MainState.swift', 'Settings.swift', 'UpdateStatus.swift', 'Chart.swift', 'Capsule.swift', 'ArcColorEditor.swift',
               'TaskMonitorCore.swift', 'TaskLogReader.swift', 'TaskMonitorService.swift', 'TaskMonitorUI.swift', 'TaskMonitorHost.swift', 'NotificationRouter.swift',
               'CapsuleHost.swift', 'CapsulePlacement.swift', 'CapsuleDocking.swift', 'StatusDetail.swift', 'StatusMenu.swift', 'Quota.swift', 'BackendEvents.swift', 'Runtime.swift', 'WindowProcess.swift', 'UsageChangeMonitor.swift', 'Termination.swift', 'BudgetCore.swift', 'ControlFeedback.swift', 'BudgetUI.swift', 'BudgetHost.swift']],
             native, '-o', stage / 'CodexUsage.bin')
@@ -130,7 +130,7 @@ def main(argv=None, *, legacy=False):
     info = {
         'CFBundleName': 'Codex 用量', 'CFBundleDisplayName': 'Codex 用量',
         'CFBundleExecutable': 'CodexUsage', 'CFBundleIdentifier': 'local.codex-usage.desktop',
-        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.2', 'CFBundleVersion': '102',
+        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.3', 'CFBundleVersion': '103',
         'CFBundleIconFile': 'AppIcon', 'LSMinimumSystemVersion': '11.0', 'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication', 'NSHumanReadableCopyright': 'Independent local usage tool. Not affiliated with OpenAI.',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},

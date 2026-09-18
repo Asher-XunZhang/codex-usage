@@ -4,9 +4,9 @@
 
 usage() {
     cat <<'EOF'
-Codex 用量快捷安装（固定 v1.0.2）
+Codex 用量快捷安装（固定 v1.0.3）
 用法：/bin/bash scripts/install.sh [选项]
-  --archive ZIP       使用已经下载的官方 v1.0.2 ZIP，仍校验固定 SHA-256
+  --archive ZIP       使用已经下载的官方 v1.0.3 ZIP，仍校验固定 SHA-256
   --destination DIR   安装目录，须为绝对路径；默认 ~/Applications
   --no-open           安装后不启动 App
   --help              显示帮助
@@ -29,15 +29,15 @@ select_release() {
     case "$architecture" in
         arm64)
             label=AppleSilicon
-            expected_sha=630118772effc4272fb7a2f0ff757e9507a57b89be154f976b940deddc4286af
+            expected_sha=61d9f7155d57a0fed83b323169072d8b36c0af06f613c20d649e79baaeda312d
             ;;
         x86_64)
             label=Intel
-            expected_sha=9566a571450977b14b56f119cdd9cc2165d0ca20cbeb6070dc737b6daa84f695
+            expected_sha=1e5ea76cdf1bcc9a65f5de38c6018da966b29c98a9672c4691f3f42e2e7cff84
             ;;
         *) fail "不支持的芯片架构：$architecture" ;;
     esac
-    version=1.0.2
+    version=1.0.3
     filename="codex-usage-desktop-v${version}-${label}.zip"
     release_url="https://github.com/Asher-XunZhang/codex-usage/releases/download/v${version}/${filename}"
 }

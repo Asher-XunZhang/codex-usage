@@ -43,6 +43,77 @@ enum CapsuleQuotaColors {
     }
 }
 
+/// Only the collapsed quota arc uses this preference. Nil colors retain the
+/// theme-aware defaults; editing the two endpoints selects a custom gradient.
+struct CapsuleArcStyle: Codable, Equatable {
+    enum Mode: String, Codable { case solid, gradient }
+    var version = 1
+    var mode: Mode = .gradient
+    var solidHex: String?
+    var lowHex: String?
+    var highHex: String?
+    static let preferenceKey = "capsuleArcStyle"
+    var isBuiltinGradient: Bool { lowHex == nil && highHex == nil }
+    var isValid: Bool {
+        version == 1 && [solidHex, lowHex, highHex].compactMap { $0 }.allSatisfy { Self.parse($0) != nil }
+            && ((lowHex == nil) == (highHex == nil))
+    }
+    static func parse(_ hex: String) -> NSColor? {
+        guard hex.count == 7, hex.first == "#", hex.dropFirst().allSatisfy({ $0.isASCII && $0.isHexDigit }),
+              let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return NSColor(srgbRed: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255,
+                       blue: CGFloat(value & 255) / 255, alpha: 1)
+    }
+    static func hex(_ color: NSColor) -> String {
+        let rgb = color.usingColorSpace(.sRGB) ?? .black
+        return String(format: "#%02X%02X%02X", Int((rgb.redComponent * 255).rounded()),
+                      Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
+    }
+    func endpoint(high: Bool, theme: CapsuleTheme) -> NSColor {
+        (high ? highHex : lowHex).flatMap(Self.parse) ?? CapsuleQuotaColors.color(for: high ? 1 : 0, theme: theme)
+    }
+    func solidColor(theme: CapsuleTheme) -> NSColor {
+        solidHex.flatMap(Self.parse) ?? CapsuleQuotaColors.color(for: 1, theme: theme)
+    }
+    func color(for fraction: CGFloat, theme: CapsuleTheme) -> NSColor {
+        guard isValid else { return CapsuleQuotaColors.color(for: fraction, theme: theme) }
+        if mode == .solid { return solidColor(theme: theme) }
+        guard !isBuiltinGradient else { return CapsuleQuotaColors.color(for: fraction, theme: theme) }
+        let low = endpoint(high: false, theme: theme).usingColorSpace(.sRGB)!, high = endpoint(high: true, theme: theme).usingColorSpace(.sRGB)!
+        let t = fraction.isFinite ? min(1, max(0, fraction)) : 0
+        return NSColor(srgbRed: low.redComponent + (high.redComponent - low.redComponent) * t,
+                       green: low.greenComponent + (high.greenComponent - low.greenComponent) * t,
+                       blue: low.blueComponent + (high.blueComponent - low.blueComponent) * t, alpha: 1)
+    }
+    mutating func setColor(_ color: NSColor, high: Bool, theme: CapsuleTheme) {
+        if mode == .solid { solidHex = Self.hex(color); return }
+        // Materialize both defaults before replacing one endpoint.
+        let low = Self.hex(endpoint(high: false, theme: theme)), upper = Self.hex(endpoint(high: true, theme: theme))
+        lowHex = high ? low : Self.hex(color); highHex = high ? Self.hex(color) : upper
+    }
+    mutating func resetColors() {
+        if mode == .solid { solidHex = nil } else { lowHex = nil; highHex = nil }
+    }
+    static func load(_ preferences: UserDefaults) -> (style: Self, error: String?) {
+        guard let stored = preferences.object(forKey: preferenceKey) else { return (Self(), nil) }
+        guard let data = stored as? Data, let style = try? JSONDecoder().decode(Self.self, from: data), style.isValid else {
+            return (Self(), "已保存的配色无法读取，暂用默认颜色；原配置保留，应用后才会替换。")
+        }
+        return (style, nil)
+    }
+    func save(_ preferences: UserDefaults) -> String? {
+        guard isValid, let data = try? JSONEncoder().encode(self) else { return "配色无效，请重新选择颜色。" }
+        let previous = preferences.object(forKey: Self.preferenceKey)
+        preferences.set(data, forKey: Self.preferenceKey)
+        guard preferences.synchronize(), preferences.data(forKey: Self.preferenceKey) == data else {
+            if let previous = previous { preferences.set(previous, forKey: Self.preferenceKey) }
+            else { preferences.removeObject(forKey: Self.preferenceKey) }
+            return "配色未能保存，修改已保留，请重试应用。"
+        }
+        return nil
+    }
+}
+
 /// Only display values live here: no hidden controls, layout tree or history rows.
 final class CapsuleState {
     var changed: (() -> Void)?
@@ -52,6 +123,8 @@ final class CapsuleState {
     var quotaName = "剩余额度" { didSet { changed?() } }
     var quotaStale = false { didSet { changed?() } }
     var theme: CapsuleTheme = .dark { didSet { changed?() } }
+    var arcStyle = CapsuleArcStyle() { didSet { changed?() } }
+    var arcStylePreview: CapsuleArcStyle? { didSet { changed?() } }
     var monitorRows: [(id: String, title: String, status: String, active: Bool)] = [] { didSet { changed?() } }
     var monitorChecking = false { didSet { changed?() } }
     var canRefresh: Bool { monitorMode ? !monitorChecking : enabled }
@@ -63,6 +136,9 @@ final class CapsuleState {
     var monitorTitle = "尚未选择关注任务" { didSet { changed?() } }
     var monitorDetail = "在任务监控页选择正在执行的任务" { didSet { changed?() } }
     var monitorSource = "正在核对任务来源" { didSet { changed?() } }
+    var showsDockedMonitor: Bool {
+        monitorUnread > 0 || monitorRows.contains(where: { $0.active }) || ["running", "unknown", "idle"].contains(monitorStatus)
+    }
     var monitorStatusLabel: String { ["running": "执行中", "completed": "本轮已结束", "interrupted": "本轮已中断", "unknown": "状态待确认", "idle": "等待下一轮"][monitorStatus] ?? "暂无监控" }
     var budgetMode = false { didSet { changed?() } }
     var budgetID = "" { didSet { changed?() } }
@@ -208,8 +284,12 @@ final class CapsuleSurface: NSView {
     static let small = NSSize(width: 76, height: 76)
     static let large = NSSize(width: 336, height: 410)
     var morphCompactFrame: NSRect?, morphDetailFrame: NSRect?
+    // Morph anchors are screen coordinates. An embedded preview occupies only
+    // part of its window, so the window frame is not the surface frame.
+    private var screenFrame: NSRect { window.map { $0.convertToScreen(convert(bounds, to: nil)) } ?? bounds }
+    private let managesWindowShadow: Bool
     private var morph: CapsuleMorph {
-        let current = window?.frame ?? bounds
+        let current = screenFrame
         let compact = expansion == 0 ? current : morphCompactFrame ?? NSRect(x: current.maxX - 76, y: current.maxY - 76, width: 76, height: 76)
         let panel = expansion == 1 ? current : morphDetailFrame ?? current
         return CapsuleMorph.frame(compact: compact, panel: panel, progress: expansion)
@@ -236,6 +316,7 @@ final class CapsuleSurface: NSView {
     /// Tests replace only the blocking menu tracker; item actions remain native.
     var menuTrackingOverride: ((NSMenu, NSPoint) -> Void)?
     var appearanceChanged: (() -> Void)?
+    var dockedContentChanged: (() -> Void)?
     var expansion: CGFloat = 0 {
         didSet {
             if expansion > 0 { finishLiquidAnimation() }
@@ -245,7 +326,7 @@ final class CapsuleSurface: NSView {
                 // compact action stable for accessibility focus across transitions.
                 accessibleActions = accessibleActions.filter { $0.key == "details" || $0.key == "context" }
             }
-            if (oldValue == 0) != (expansion == 0) { window?.hasShadow = expansion > 0 }
+            if managesWindowShadow, (oldValue == 0) != (expansion == 0) { window?.hasShadow = expansion > 0 }
             updateScrollers(); needsDisplay = true
         }
     }
@@ -279,8 +360,9 @@ final class CapsuleSurface: NSView {
     private static let lightLiquid = CGGradient(colorSpace: CGColorSpaceCreateDeviceRGB(), colorComponents: [0.82,0.94,0.87,1, 0.74,0.88,0.80,1], locations: [0,1], count: 2)!
     override var isFlipped: Bool { true }
 
-    init(state: CapsuleState) {
+    init(state: CapsuleState, managesWindowShadow: Bool = true) {
         self.state = state
+        self.managesWindowShadow = managesWindowShadow
         targetFraction = state.normalizedQuota; liquidFraction = state.normalizedQuota
         super.init(frame: NSRect(origin: .zero, size: Self.small))
         state.changed = { [weak self] in self?.stateChanged() }
@@ -297,6 +379,7 @@ final class CapsuleSurface: NSView {
         }
         needsDisplay = true
         appearanceChanged?()
+        dockedContentChanged?()
         let next = state.normalizedQuota
         guard next != targetFraction else { return }
         targetFraction = next
@@ -324,7 +407,7 @@ final class CapsuleSurface: NSView {
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.hasShadow = expansion > 0
+        if managesWindowShadow { window?.hasShadow = expansion > 0 }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -454,7 +537,7 @@ final class CapsuleSurface: NSView {
         return containsSurfacePoint(convert(window.convertPoint(fromScreen: point), from: nil))
     }
     private func containsSurfacePoint(_ point: NSPoint) -> Bool {
-        NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).contains(point)
+        surfaceOutline(in: bounds).contains(point)
     }
     private func screenPoint(_ event: NSEvent) -> NSPoint {
         (event.window ?? window)?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
@@ -654,7 +737,7 @@ final class CapsuleSurface: NSView {
                    ("autoHide", state.autoHide ? "关闭靠边自动隐藏" : "开启靠边自动隐藏"),
                    ("edgeMetric", state.edgeShowsUsed ? "贴边显示剩余额度" : "贴边显示已用额度"),
                 ("pin", state.pinned ? "取消置顶" : "置顶浮窗"),
-                   ("themeDark", "深色主题"), ("themeLight", "浅色主题"), ("settings", "设置…"), ("updates", "数据与更新…"), ("", ""),
+                   ("arcColors", "弧线配色…"), ("themeDark", "深色主题"), ("themeLight", "浅色主题"), ("settings", "设置…"), ("updates", "数据与更新…"), ("", ""),
                    ("only", "仅浮窗"), ("menu", "仅状态栏"), ("close", "隐藏浮窗"), ("quit", "退出 Codex 用量")],
                   selected: state.theme == .dark ? "themeDark" : "themeLight", point: point, prefix: "", generation: generation)
     }
@@ -825,7 +908,7 @@ final class CapsuleSurface: NSView {
             let remaining = NSBezierPath()
             remaining.appendArc(withCenter: center, radius: radius, startAngle: -90, endAngle: -90 + 360 * fraction, clockwise: false)
             remaining.lineWidth = 5; remaining.lineCapStyle = .round
-            CapsuleQuotaColors.color(for: fraction, theme: state.theme).setStroke(); remaining.stroke()
+            (state.arcStylePreview ?? state.arcStyle).color(for: fraction, theme: state.theme).setStroke(); remaining.stroke()
         }
         let name = state.displayName == "剩余额度" ? "额度" : state.displayName.replacingOccurrences(of: "剩余", with: "余")
         text(name, NSRect(x: center.x - 23, y: 11, width: 46, height: 13), size: 8.5, color: secondary, weight: .medium, alignment: .center)
@@ -926,17 +1009,65 @@ final class CapsuleSurface: NSView {
         fill(rect, radius: rect.height / 2, color: color.withAlphaComponent(state.theme == .light ? 0.09 : 0.16))
         text(label, rect.offsetBy(dx: 0, dy: -0.5), size: 9, color: color, weight: .medium, mono: true, alignment: .center)
     }
+    // A single contour drives paint and hit testing, including intermediate frames.
+    // Canonical coordinates describe bottom docking in this flipped view.
+    func surfaceOutline(in rect: NSRect) -> NSBezierPath {
+        guard docking > 0, let edge = dockEdge else {
+            return NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+        }
+        let t = min(1, max(0, docking))
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            let p: NSPoint
+            switch edge {
+            case "top": p = NSPoint(x: x, y: 1 - y)
+            case "left": p = NSPoint(x: 1 - y, y: x)
+            case "right": p = NSPoint(x: y, y: x)
+            default: p = NSPoint(x: x, y: y)
+            }
+            return NSPoint(x: rect.minX + p.x * rect.width, y: rect.minY + p.y * rect.height)
+        }
+        // Six matching cubic segments morph the orb into a low, broad crest.
+        // The two outer feet meet the screen edge tangentially, without a neck.
+        let ends: [(CGFloat, CGFloat)] = [(0.20, 0.28), (0.5, 0), (0.80, 0.28), (1, 1), (0.5, 1), (0, 1)]
+        let controls: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+            (0.10, 1, 0.11, 0.54), (0.29, 0.02, 0.39, 0),
+            (0.61, 0, 0.71, 0.02), (0.89, 0.54, 0.90, 1),
+            (0.84, 1, 0.67, 1), (0.33, 1, 0.16, 1)]
+        let angles: [CGFloat] = [.pi, .pi * 1.25, .pi * 1.5, .pi * 1.75, .pi * 2, .pi * 2.5, .pi * 3]
+        func mixed(_ x: CGFloat, _ y: CGFloat, _ targetX: CGFloat, _ targetY: CGFloat) -> NSPoint {
+            point(x + (targetX - x) * t, y + (targetY - y) * t)
+        }
+        let path = NSBezierPath(); path.move(to: mixed(0, 0.5, 0, 1))
+        for i in 0..<6 {
+            let a = angles[i], b = angles[i + 1], k = 4 / 3 * tan((b - a) / 4)
+            let c = controls[i], e = ends[i]
+            path.curve(to: mixed(0.5 + cos(b) / 2, 0.5 + sin(b) / 2, e.0, e.1),
+                       controlPoint1: mixed(0.5 + (cos(a) - k * sin(a)) / 2, 0.5 + (sin(a) + k * cos(a)) / 2, c.0, c.1),
+                       controlPoint2: mixed(0.5 + (cos(b) + k * sin(b)) / 2, 0.5 + (sin(b) - k * cos(b)) / 2, c.2, c.3))
+        }
+        path.close(); return path
+    }
     private func drawDockedSummary() {
         let vertical = dockEdge == "left" || dockEdge == "right"
         let percent = state.normalizedQuota.map { "\(Int(((state.edgeShowsUsed ? 1 - $0 : $0) * 100 + 1e-9).rounded(.down)))%" } ?? "—"
         let value = percent + (state.displayStale && state.normalizedQuota != nil ? "*" : "")
-        if vertical {
-            text(state.edgeShowsUsed ? "已用" : "剩余", NSRect(x: 2, y: 9, width: bounds.width - 4, height: 14), size: 8, color: secondary, alignment: .center)
-            text(value, NSRect(x: 1, y: bounds.height / 2 - 9, width: bounds.width - 2, height: 20), size: 12, color: ink, weight: .medium, mono: true, alignment: .center)
-            if state.monitorStatus != "none" || state.monitorUnread > 0 { drawMonitorBadge(in: NSRect(x: 3, y: bounds.height - 21, width: bounds.width - 6, height: 13)) }
-        } else {
-            text(value, NSRect(x: 5, y: 7, width: 39, height: 20), size: 12, color: ink, weight: .medium, mono: true, alignment: .center)
-            if state.monitorStatus != "none" || state.monitorUnread > 0 { drawMonitorBadge(in: NSRect(x: 44, y: 9, width: max(18, bounds.width - 48), height: 13)) }
+        let showsMonitor = state.showsDockedMonitor
+        let size: CGFloat = vertical ? 11 : 12
+        let valueFont = font(size: size, weight: .medium, mono: true, rounded: false)
+        let valueWidth = ceil((value as NSString).size(withAttributes: [.font: valueFont]).width) + 2
+        // Place the visible capital/digit height around the optical center.
+        let centerY = bounds.midY + (vertical && showsMonitor ? -9 : vertical ? 0 : dockEdge == "top" ? -1 : 1)
+        let badgeWidth: CGFloat = state.monitorUnread > 0 ? 36 : 20
+        let groupWidth = valueWidth + (showsMonitor && !vertical ? badgeWidth + 6 : 0)
+        let valueX = bounds.midX - (vertical ? valueWidth : groupWidth) / 2
+        text(value, NSRect(x: valueX, y: centerY - valueFont.ascender + valueFont.capHeight / 2,
+                          width: valueWidth, height: ceil(valueFont.ascender - valueFont.descender + 3)),
+             size: size, color: ink, weight: .medium, mono: true, alignment: .center)
+        if showsMonitor {
+            let badge = vertical
+                ? NSRect(x: bounds.midX - badgeWidth / 2, y: bounds.midY + 4, width: badgeWidth, height: 13)
+                : NSRect(x: valueX + valueWidth + 6, y: centerY - 6.5, width: badgeWidth, height: 13)
+            drawMonitorBadge(in: badge)
         }
     }
     private func drawSummaryHeader() {
@@ -959,7 +1090,7 @@ final class CapsuleSurface: NSView {
     }
     private func drawMorphPrimary() {
         guard docking == 0 else { return }
-        let current = window?.frame ?? bounds
+        let current = screenFrame
         let compact = expansion == 0 ? current : morphCompactFrame ?? NSRect(x: current.maxX - 76, y: current.maxY - 76, width: 76, height: 76)
         let panel = expansion == 1 ? current : morphDetailFrame ?? current
         let p = morph.vertical, scale = 0.9 + 0.1 * p
@@ -987,8 +1118,7 @@ final class CapsuleSurface: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let light = state.theme == .light
-        let radius = cornerRadius
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        let shape = surfaceOutline(in: bounds.insetBy(dx: 0.5, dy: 0.5))
         NSGraphicsContext.saveGraphicsState(); shape.addClip()
         palette.background.setFill(); shape.fill()
         // At full expansion every label, including the quota header, stays above

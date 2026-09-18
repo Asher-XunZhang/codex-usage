@@ -1,13 +1,13 @@
 ---
 title: 平台支持与功能差异
-description: 对比 Windows 与 macOS v1.0.2 的功能、安装包与验证边界。
+description: 对比 Windows v1.0.2 与 macOS v1.0.3 的功能、安装包与验证边界。
 ---
 
 # 平台支持与功能差异
 
-**v1.0.2 提供 Windows x64、macOS Apple Silicon 和 Intel 包。** macOS 包于 2026-09-15 补充发布，更新 App 后才会获得新增功能。
+**macOS v1.0.3 提供 Apple Silicon 和 Intel 包，Windows 当前为 v1.0.2。** 更新 App 后才能获得对应的新功能。
 
-| 能力 | Windows v1.0.2 | macOS v1.0.2 |
+| 能力 | Windows v1.0.2 | macOS v1.0.3 |
 | --- | --- | --- |
 | 原生界面 | WPF 主面板、系统托盘与浮窗 | AppKit 主面板、菜单栏与浮窗 |
 | Token、趋势、模型／任务筛选、导出 | 支持 | 支持 |
@@ -16,7 +16,8 @@ description: 对比 Windows 与 macOS v1.0.2 的功能、安装包与验证边�
 | 本轮／每轮任务提醒、消息历史 | 支持 | 支持 |
 | 圆环、侧签的监控状态与未读标记 | 支持 | 支持 |
 | 连续形变、展开后整窗拖动、方向选择 | 支持 | 支持 |
-| 四边贴合与自动隐藏 | 支持 | 支持 |
+| 四边贴合与自动隐藏 | 支持 | 微弧轮廓，按任务状态调整尺寸 |
+| 单窗口自定义弧线调色 | 未在本次更新 | 单色 / 随额度双色渐变 / 重置默认 |
 | 两屏相连接缝 | 不停靠，未被邻屏覆盖的边段可用 | 可停靠并自动隐藏；按松手指针选择归属屏幕 |
 | 系统入口详情与命令菜单 | 托盘详情与右键菜单 | 菜单栏原生详情与菜单 |
 | 统一设置、系统主题与界面覆盖 | 支持 | 支持 |
@@ -36,6 +37,6 @@ description: 对比 Windows 与 macOS v1.0.2 的功能、安装包与验证边�
 
 ## 源码来源
 
-v1.0.2 的既有标签与 Windows 资产保持不变。新增 macOS 包对应 Release 单独标注的源码提交；包内 `source/` 和 App 的 `Contents/Resources/BUILD-INFO.json` 可用于核对来源。不要把 GitHub 自动生成的旧标签 Source code 当作新增 macOS 包的完整源码。
+macOS v1.0.3 使用同名源码标签；包内 `source/` 与 App 的 `Contents/Resources/BUILD-INFO.json` 可核对编译提交和源码摘要。安装器在 ZIP 定稿后独立固定摘要。旧版 v1.0.2 标签与 Windows 资产保持不变。
 
 [开发与发布](./development.md) · [两端对齐清单](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/WINDOWS-MACOS-ALIGNMENT.md)

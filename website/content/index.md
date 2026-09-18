@@ -1,6 +1,6 @@
 ---
 title: 用量、提醒与桌面陪伴
-description: 下载 Windows 或 macOS v1.0.2，查看用量、预算提醒、任务监控及四边贴合浮窗。
+description: 下载 Windows v1.0.2 或 macOS v1.0.3，查看用量、预算提醒、任务监控及四边贴合浮窗。
 outline: false
 ---
 
@@ -26,15 +26,15 @@ outline: false
 
 </div>
 <div class="docs-download">
-<p class="eyebrow">macOS · v1.0.2</p>
+<p class="eyebrow">macOS · v1.0.3</p>
 
 ## Intel / Apple Silicon
 
 原生主面板、菜单栏与圆形浮窗。按芯片下载，或使用自动选包的安装助手。
 
 <div class="docs-actions">
-<a href="https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-AppleSilicon.zip">Apple Silicon ZIP</a>
-<a href="https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-Intel.zip">Intel ZIP</a>
+<a href="https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip">Apple Silicon ZIP</a>
+<a href="https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip">Intel ZIP</a>
 </div>
 
 [安装说明 →](./installation.md#macos) · [macOS 使用指南 →](./user-guide.md)
@@ -42,7 +42,7 @@ outline: false
 </div>
 </div>
 
-**v1.0.2 已补齐 macOS 两种芯片的安装包**，带来预算提醒、任务监控和四边贴合隐藏。两端功能有区别，选择前可查看[平台对照](./platforms.md)。
+**macOS v1.0.3 提供两种芯片安装包**，新增单窗口弧线调色、微弧融合贴边轮廓和按任务状态调整尺寸。两端功能有区别，选择前可查看[平台对照](./platforms.md)。
 
 <div class="docs-paths">
 <div>
@@ -76,7 +76,7 @@ outline: false
 
 ## 适合当前工作的查看方式
 
-| 你在做什么 | Windows v1.0.2 | macOS v1.0.2 |
+| 你在做什么 | Windows v1.0.2 | macOS v1.0.3 |
 | --- | --- | --- |
 | 复盘用量 | 主面板的趋势、筛选与明细 | 主面板的趋势、筛选与明细 |
 | 专心工作，偶尔看一眼 | 系统托盘悬停摘要、单击详情卡 | 屏幕顶部菜单栏 |
@@ -89,6 +89,6 @@ Windows 浮窗的用量、预算页保留电池式额度摘要；监控页显示
 
 [安装与首次启动](./installation.md) · [问题排查](./troubleshooting.md) · [统计与隐私](./metrics-and-privacy.md) · [开发与发布](./development.md)
 
-<p class="docs-version">Windows：v1.0.2 / x64。macOS：v1.0.2 / Intel 与 Apple Silicon，最低构建目标 macOS 11。系统目标与实际验收范围见验证页。</p>
+<p class="docs-version">Windows：v1.0.2 / x64。macOS：v1.0.3 / Intel 与 Apple Silicon，最低构建目标 macOS 11。系统目标与实际验收范围见验证页。</p>
 
 这是独立开源工具，与 OpenAI 官方无隶属关系。本机 Token、订阅额度和账单采用不同口径；网站提供说明，实际数据在本机 App 中查看。

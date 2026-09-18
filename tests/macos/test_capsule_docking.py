@@ -12,6 +12,7 @@ import AppKit
 func check(_ yes: @autoclosure () -> Bool, _ why: String) { precondition(yes(), why) }
 func pump(_ seconds: Double) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
 final class CapsuleState {
+    var showsDockedMonitor = false
     var autoHide = true, interactionActive = false, keepsExpanded = false, keyboardInteracting = false
 }
 final class CapsuleSurface {
@@ -19,6 +20,7 @@ final class CapsuleSurface {
     let state = CapsuleState()
     var docking: CGFloat = 0, expansion: CGFloat = 0
     var dockEdge: String?
+    var dockedContentChanged: (() -> Void)?
     weak var panel: NSPanel?
     func containsScreenPoint(_ point: NSPoint) -> Bool { panel?.frame.contains(point) ?? false }
 }
@@ -87,7 +89,7 @@ case "seam-compact-left", "seam-compact-right", "seam-expanded-left", "seam-expa
     NSEvent.mouseLocation = NSPoint(x: 500, y: 700)
     _ = dock.handlePointer(inside: false)
     dock.scheduleHide(); pump(0.62)
-    check(surface.docking == 1 && panel.frame.width == 36 && owner.contains(panel.frame), "pointer exit hides within its own screen at shared seam")
+    check(surface.docking == 1 && panel.frame.width == 44 && owner.contains(panel.frame), "pointer exit hides within its own screen at shared seam")
     check(destinationRight ? panel.frame.minX == 1000 : panel.frame.maxX == 1000, "side tab stays attached to seam")
     let restoredPanel = NSPanel(), restoredSurface = CapsuleSurface(); restoredSurface.panel = restoredPanel
     let restored = CapsuleDocking(panel: restoredPanel, surface: restoredSurface, preferences: prefs)
@@ -97,8 +99,13 @@ case "seam-compact-left", "seam-compact-right", "seam-expanded-left", "seam-expa
     check(surface.docking == 0 && expansions == 0 && owner.contains(panel.frame), "shared-edge hover restores reachable ring without instant expansion")
 case "two-stage":
     dock.finishDrag(at: NSPoint(x: 25, y: 320)); check(dock.edge == .left, "drag release docks")
-    pump(0.62); check(surface.docking == 1 && panel.frame.size == NSSize(width: 36, height: 76), "outside delay hides to readable edge tab")
+    pump(0.62); check(surface.docking == 1 && panel.frame.size == NSSize(width: 44, height: 68), "outside delay hides to readable edge tab")
     NSEvent.mouseLocation = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+    let compactTab = panel.frame
+    surface.state.showsDockedMonitor = true; surface.dockedContentChanged?(); pump(0.02)
+    check(panel.frame.height == 96 && panel.frame.midY == compactTab.midY && panel.frame.minX == compactTab.minX, "new task grows tab without shifting edge or center")
+    surface.state.showsDockedMonitor = false; surface.dockedContentChanged?(); pump(0.02)
+    check(panel.frame == compactTab && surface.docking == 1, "last task read restores compact centered tab")
     check(dock.handlePointer(inside: true), "tab owns hover")
     pump(0.16); check(surface.docking == 0 && expansions == 0, "tab restores compact only")
     _ = dock.handlePointer(inside: true); pump(0.2)

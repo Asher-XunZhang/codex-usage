@@ -13,14 +13,14 @@ A native desktop companion for Codex: local token statistics and account quota, 
 | 平台 | 当前发行包 | 打开方式 |
 | --- | --- | --- |
 | Windows x64 | [v1.0.2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip) · [SHA-256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip.sha256) | 完整解压到固定目录，运行 `CodexUsage.exe` |
-| macOS Apple Silicon（M 系列） | [v1.0.2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-AppleSilicon.zip) | 将 `Codex用量.app` 放入应用程序目录 |
-| macOS Intel | [v1.0.2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-Intel.zip) | 将 `Codex用量.app` 放入应用程序目录 |
+| macOS Apple Silicon（M 系列） | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip) | 将 `Codex用量.app` 放入应用程序目录 |
+| macOS Intel | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip) | 将 `Codex用量.app` 放入应用程序目录 |
 
-**v1.0.2 提供 Windows x64、macOS Apple Silicon 与 Intel 下载包。** macOS 新增预算、任务监控、统一设置及四边贴合隐藏。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
+**macOS 最新为 v1.0.3（Apple Silicon / Intel），Windows 保持 v1.0.2。** macOS 新增单窗口弧线调色、微弧融合贴边轮廓及按任务状态调整尺寸。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
 
 Windows 包自带 .NET 与 Python，无需另装运行环境；请保留完整目录，不要单独移动 EXE。更新前从托盘菜单退出旧版本，再完整解压新包。用户配置与记录保存在 `%LOCALAPPDATA%\CodexUsageDashboard\desktop`，与程序目录分离。构建目标为 Windows 10 2004 及以上 x64，日常验证环境为 Windows 11；未提供 Windows ARM64 原生包。详见 [Windows 使用指南](docs/windows/README.md)。
 
-macOS 安装助手固定安装 v1.0.2，自动选择芯片并校验 ZIP 和签名完整性，不需要 Python、Homebrew 或管理员密码。它会要求确认信任来源；当前 App 使用 ad hoc 签名，未经 Developer ID 签名或 Apple 公证。安装助手、手动安装、Intel 排障及验证边界见 [macOS 安装指南](docs/macos/INSTALL.md)。更新前退出并移走旧 App；保留支持目录和偏好即可继续使用原有数据。
+macOS 安装助手固定安装 v1.0.3，自动选择芯片并校验 ZIP 和签名完整性，不需要 Python、Homebrew 或管理员密码。它会要求确认信任来源；当前 App 使用 ad hoc 签名，未经 Developer ID 签名或 Apple 公证。安装助手、手动安装、Intel 排障及验证边界见 [macOS 安装指南](docs/macos/INSTALL.md)。更新前退出并移走旧 App；保留支持目录和偏好即可继续使用原有数据。
 
 ## 三种查看方式
 
@@ -32,13 +32,9 @@ macOS 安装助手固定安装 v1.0.2，自动选择芯片并校验 ZIP 和签�
 
 关闭主面板会释放该窗口及统计服务，常驻托盘和浮窗继续工作；隐藏浮窗保留可找回它的托盘入口。只有明确选择“退出”才结束整个工具。详细行为按平台阅读 [Windows 指南](docs/windows/README.md)或 [macOS 架构](docs/macos/ARCHITECTURE.md)。
 
-<p>
-  <img src="docs/macos/images/compact-dark-50.png" width="96" alt="macOS 深色圆环，合成数据">
-  <img src="docs/macos/images/compact-light-50.png" width="96" alt="macOS 浅色圆环，合成数据">
-  <img src="docs/macos/images/expanded-light.png" width="260" alt="macOS 用量浮窗，合成数据">
-</p>
+![macOS v1.0.3 视图与交互](docs/macos/images/v1.0.3-interactions.png)
 
-以上为较早 macOS 版本的合成演示图，保留作圆环与用量说明；不展示 v1.0.2 新增监控布局。新版连续形变见 [动画演示](docs/macos/screenshots/morph-continuous.mp4)，使用合成数据，非桌面录屏。
+以上为 v1.0.3 原生 AppKit 离屏渲染，使用合成数据；中间帧表示形变进度，不是账号额度。完整的[调色板说明](docs/macos/ARC-COLORS.md)和[四边贴合交互图解](docs/macos/FLOATING-1.0.3.md)包含深浅主题与任务状态示例。
 
 ## 预算提醒与任务监控
 

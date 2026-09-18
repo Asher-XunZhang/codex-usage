@@ -19,8 +19,8 @@ walk(root)
 for (const page of pages) assert.ok(existsSync(join(root, `${page}.html`)), `Missing page: ${page}`)
 const releases = [
   'v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip',
-  'v1.0.2/codex-usage-desktop-v1.0.2-Intel.zip',
-  'v1.0.2/codex-usage-desktop-v1.0.2-AppleSilicon.zip'
+  'v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip',
+  'v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip'
 ]
 for (const page of ['index', 'installation']) {
   const html = readFileSync(join(root, `${page}.html`), 'utf8')

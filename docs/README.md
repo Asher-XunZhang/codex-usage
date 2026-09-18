@@ -4,7 +4,7 @@
 
 | 目录 | 内容 | 入口 |
 | --- | --- | --- |
-| `macos/` | v1.0.2 发行、安装、架构、预算、任务监控、构建与验收记录 | [macOS 文档](macos/README.md) |
+| `macos/` | v1.0.3 发行、安装、架构、预算、任务监控、构建与验收记录 | [macOS 文档](macos/README.md) |
 | `windows/` | 使用与构建、预算提醒、任务监控、交互设计与验证边界 | [Windows 文档](windows/README.md) |
 | `common/` | 两端对齐、可选用量技能、文档站维护 | [公共文档](common/README.md) |
 

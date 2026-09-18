@@ -32,6 +32,7 @@ final class UsageSettingsController: NSWindowController, NSWindowDelegate, NSTab
         display.addArrangedSubview(label("拖动松手后判断停靠；仅可见侧签响应悬停。主动收起会解除保持展开。"))
         display.addArrangedSubview(NSStackView(views: [button("显示／隐藏浮窗", "toggleFloating"), button("仅菜单栏", "onlyStatusBar"), button("仅浮窗", "onlyFloating")]))
         display.addArrangedSubview(button("打开任务监控", "monitor"))
+        display.addArrangedSubview(button("弧线配色…", "arcColors"))
         let data = NSTabViewItem(identifier: "data"); data.label = "数据与更新"; data.view = dataPage; tabs.addTabViewItem(data)
         let reminders = page("提醒与恢复", id: "reminders")
         reminders.addArrangedSubview(row("任务提醒方式", popup("delivery", choices: [("system", "系统通知与应用内标记"), ("markers", "仅应用内标记")])))
@@ -158,6 +159,7 @@ extension AppDelegate {
         case "onlyFloating": onlyFloating()
         case "onlyStatusBar": onlyStatusBar()
         case "monitor": openTaskMonitor()
+        case "arcColors": showArcColors()
         case "budgets": openBudget(nil)
         case "refreshTasks": taskMonitor?.refresh()
         case "pauseTasks", "resumeTasks": taskMonitor?.command("settings", payload: ["patch": ["pausedUntil": action == "pauseTasks" ? Date().timeIntervalSince1970 + 1800 : 0]]) { [weak self] in self?.usageSettings?.showResult($0) }
@@ -180,6 +182,7 @@ extension AppDelegate {
         let resolved = appearance(floating) ?? NSApp.effectiveAppearance
         let theme: CapsuleTheme = resolved.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
         if capsuleState.theme != theme { capsuleState.theme = theme }
+        arcColorEditor?.updateTheme(theme)
         usageSettings?.window?.appearance = global; updateStatusDetail()
     }
 }

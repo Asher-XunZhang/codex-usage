@@ -168,6 +168,32 @@ case "shape-hotspot":
         f.click(NSPoint(x: 29, y: 65))
         check(f.actions == ["refresh"], "Leaving the old hotspot must release its override so controls work normally")
     }
+case "docked-shape":
+    let f = Fixture(); defer { f.dispose() }
+    check(!f.state.showsDockedMonitor, "No task must not reserve badge space")
+    f.state.monitorStatus = "completed"
+    check(!f.state.showsDockedMonitor, "Read completion releases badge space")
+    f.state.monitorUnread = 2
+    check(f.state.showsDockedMonitor, "Unread completion remains visible")
+    f.state.monitorUnread = 0; f.state.monitorStatus = "running"
+    check(f.state.showsDockedMonitor, "Running task remains visible")
+    for edge in ["bottom", "top", "left", "right"] {
+        let vertical = edge == "left" || edge == "right"
+        f.window.setContentSize(vertical ? NSSize(width: 44, height: 68) : NSSize(width: 88, height: 28))
+        f.window.contentView?.layoutSubtreeIfNeeded()
+        f.surface.dockEdge = edge; f.surface.docking = 1
+        let bounds = f.surface.bounds, center = NSPoint(x: bounds.midX, y: bounds.midY)
+        check(f.surface.containsScreenPoint(f.screen(center)), "Every orientation keeps the quota center interactive")
+        let outside = NSPoint(x: edge == "left" ? bounds.maxX - 2 : 2, y: edge == "bottom" ? 2 : bounds.maxY - 2)
+        check(!f.surface.containsScreenPoint(f.screen(outside)), "Transparent shoulder must not activate or capture context")
+        f.actions = []; f.click(center)
+        check(f.actions == ["expand"], "Every docked center expands")
+        for fraction: CGFloat in [0.01, 0.25, 0.5, 0.75, 1] {
+            f.surface.docking = fraction
+            let path = f.surface.surfaceOutline(in: bounds)
+            check(path.contains(center) && bounds.insetBy(dx: -0.01, dy: -0.01).contains(path.bounds), "Morph remains connected and within the window")
+        }
+    }
 case "context":
     let f = Fixture(); defer { f.dispose() }
     f.state.enabled = false
@@ -176,6 +202,7 @@ case "context":
         check(f.state.menuPresented && !f.state.pointerPressed, "Context tracking freezes geometry without a left-button press")
         check(menu.items.first { ($0.representedObject as? String) == "refresh" }?.isEnabled == false, "Disabled refresh also stays disabled in context menu")
         check(menu.items.contains { ($0.representedObject as? String) == "quit" }, "Context exposes an exit path")
+        check(menu.items.contains { ($0.representedObject as? String) == "arcColors" }, "Collapsed context exposes arc colors directly")
         check(!menu.items.contains { ["model", "task"].contains($0.representedObject as? String ?? "") }, "Async selectors are opened from expanded controls, without nested context tracking")
         f.choose("menu", in: menu)
     }
@@ -259,6 +286,9 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_shape_and_original_hotspot_during_resize_and_clamp(self):
         self.run_case('shape-hotspot')
+
+    def test_docked_contour_monitor_visibility_and_input(self):
+        self.run_case('docked-shape')
 
     def test_context_right_control_click_and_cancel(self):
         self.run_case('context')

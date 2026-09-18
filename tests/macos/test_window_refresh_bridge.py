@@ -51,6 +51,8 @@ final class Worker {
 }
 final class Quota { func refresh(force: Bool) {} }
 final class Fixture {
+    var arcEditors = 0
+    func showArcColors() { arcEditors += 1 }
     func receiveTaskMonitorAction(_ action: String, payload: Object) -> Bool { false }
     func showSettingsPage(_ page: String) {}
     func sendTaskMonitorRoute() {}
@@ -90,6 +92,8 @@ final class Fixture {
 let value = Fixture()
 switch CommandLine.arguments[1] {
 case "host-result":
+    value.receiveWindowAction("arcColors", payload: [:])
+    check(value.arcEditors == 1 && value.scans == 0 && value.pendingRefresh == nil, "Opening the color editor routes to the host without refreshing data")
     value.requestHelperRefresh()
     let id = value.hostRefreshID!
     check(!value.capsuleState.enabled && value.pendingRefresh == -2 && value.windowProcesses.sent.count == 1, "Host must expose a busy state while awaiting the helper")

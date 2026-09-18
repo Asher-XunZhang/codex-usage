@@ -92,6 +92,8 @@ final class FakeSession { func invalidateAndCancel() {} }
 final class FakeAnimation { func stop() {} }
 final class FakeDocking { func prepareToHide() {} }
 final class FakePopover { func performClose(_ sender: Any?) {} }
+final class FakeArcEditor { var closes = 0; func close() { closes += 1 } }
+final class FakeCapsuleState { var arcStylePreview: String? = "unsaved preview" }
 final class FakeWorker {
     let snapshot = (capsuleCompact: "周余 42%", detail: "合成额度")
     var stopCount = 0, url: URL? = URL(string: "http://127.0.0.1:1234")
@@ -110,6 +112,8 @@ final class FakeCoordinator {
 }
 ''' + termination + r'''
 final class Fixture: NSObject {
+    var arcColorEditor: FakeArcEditor? = FakeArcEditor()
+    let capsuleState = FakeCapsuleState()
     func updateStatusDetail() {}
     var floatPlacement: NSRect?, floatLastFrame: NSRect?
     var floatDocking: FakeDocking?
@@ -244,16 +248,19 @@ case "helper-hide":
     check(reopened.window === original && original.isVisible && NSApp.terminations == 0, "A queued close callback cannot close a reopened window")
 case "quit":
     let host = fresh(), item = host.statusItem!
+    let editor = host.arcColorEditor!
     host.mainWindowOpen = true; host.windowProcesses.mainIsRunning = true
     check(host.applicationShouldTerminate(NSApp) == .terminateCancel && !host.terminating, "Host waits for Main save confirmation before cleanup")
     check(host.windowProcesses.closes == 1 && host.collector.stopCount == 0, "Host remains usable while Main can refuse close")
     host.windowProcesses.finishClose(success: false); drain()
     check(!host.terminating && !host.waitingForMainClose && NSApp.terminations == 0, "A rejected close leaves host usable")
+    check(editor.closes == 0 && host.capsuleState.arcStylePreview != nil, "A refused quit preserves the color draft")
     _ = host.applicationShouldTerminate(NSApp)
     host.windowProcesses.finishClose(); drain()
     check(NSApp.terminations == 1, "Confirmed Main close requests host termination again")
     _ = host.applicationShouldTerminate(NSApp)
     check(host.terminating && host.collector.stopCount == 1 && host.quotaReader.stopCount == 1 && host.backend.stopCount == 1, "Confirmed Quit cleans owned processes")
+    check(editor.closes == 1 && host.arcColorEditor == nil && host.capsuleState.arcStylePreview == nil, "Confirmed quit closes the editor and discards live preview")
     host.collector.finishStops(); host.quotaReader.finishStops(); host.backend.finishStops(); drain()
     check(NSApp.terminations == 2 && host.windowProcesses.stops == 1 && host.statusItem === item, "Completed cleanup resumes termination")
     check(host.applicationShouldTerminate(NSApp) == .terminateNow, "Resumed Quit is idempotent")

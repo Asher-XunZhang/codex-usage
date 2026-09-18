@@ -115,3 +115,5 @@ pnpm check
 网站只复制文档目录中公开的图片，不从本机用户数据生成页面。构建网站不会构建、重启或操作桌面应用。
 
 [平台支持与差异](./platforms.md) · [验证与兼容性](./validation.md) · [当前版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/CHANGELOG.md)
+
+macOS v1.0.3 可从同名 tag 或 ZIP 的 source/ 重建。安装助手在 ZIP 定稿后单独固定摘要；以 Release 资产中的 install.sh 为准。

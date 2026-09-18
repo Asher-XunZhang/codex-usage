@@ -5,7 +5,7 @@ description: Windows v1.0.2 的用量统计、预算提醒、任务监控、圆�
 
 # Windows 使用指南
 
-本页对应 **Windows v1.0.2**。首次使用先[完整解压并打开 CodexUsage.exe](./installation.md#windows)。macOS v1.0.2 的操作见[macOS 使用指南](./user-guide.md)。
+本页对应 **Windows v1.0.2**。首次使用先[完整解压并打开 CodexUsage.exe](./installation.md#windows)。macOS v1.0.3 的操作见[macOS 使用指南](./user-guide.md)。
 
 ## 主面板：用量、预算与任务
 

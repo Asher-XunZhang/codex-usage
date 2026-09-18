@@ -33,6 +33,6 @@ python3 -m unittest tests.macos.test_arc_colors -v
 
 嵌入预览还会与独立折叠浮窗进行像素对比，覆盖深浅主题、0% / 9% / 79% / 100% 和不同窗口位置，防止百分比误用外层窗口坐标而偏移；预览组件不能改变调色窗口的阴影。
 
-实现入口：[配色模型与圆环绘制](../../../src/macos/Features/Floating/Capsule.swift)、[单窗口编辑器](../../../src/macos/Features/Floating/ArcColorEditor.swift)、[宿主与生命周期](../../../src/macos/App/Main.swift)。
+实现入口：[配色模型与圆环绘制](../../src/macos/Features/Floating/Capsule.swift)、[单窗口编辑器](../../src/macos/Features/Floating/ArcColorEditor.swift)、[宿主与生命周期](../../src/macos/App/Main.swift)。
 
 [返回 macOS 文档](README.md)

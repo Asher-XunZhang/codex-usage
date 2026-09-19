@@ -79,11 +79,12 @@ def run(application, background=False):
         number = 0
         message_lock = threading.Lock()
         host = None
+        last_inspection = None
         def invoke(args, timeout=20):
             return subprocess.run([str(application), *args], env=env, startupinfo=startup,
                                   creationflags=subprocess.CREATE_NO_WINDOW, capture_output=True, timeout=timeout)
         def send(payload, target=None):
-            nonlocal number
+            nonlocal number, last_inspection
             with message_lock:
                 number += 1
                 request, response = root / f'request-{number}.json', root / f'response-{number}.json'
@@ -93,6 +94,8 @@ def run(application, background=False):
                 args += ['--pipe', target]
             result = invoke(args)
             data = json.loads(response.read_text(encoding='utf-8')) if response.exists() else {}
+            if payload.get('action') == 'inspect':
+                last_inspection = data
             if result.returncode or data.get('error'):
                 raise RuntimeError(f'IPC {payload.get("action")}: {data or result.stderr.decode(errors="replace")}')
             return data
@@ -106,7 +109,7 @@ def run(application, background=False):
                 except (RuntimeError, OSError, ValueError) as exc:
                     last_error = exc
                 time.sleep(.15)
-            raise AssertionError(f'{description}; last error: {last_error}')
+            raise AssertionError(f'{description}; last error: {last_error}; last panel: {last_inspection}')
         def state():
             return send({'action': 'state'})
         def count(snapshot):
@@ -148,6 +151,9 @@ def run(application, background=False):
             inspected = until(lambda: value if (value := send({'action': 'inspect'}, pipe + '-main')).get('summary', {}).get('total_tokens') == 120 else None, 'main filtered snapshot')
             check(inspected['filters'] == {'days': '30', 'model': 'test-model', 'task': 'root', 'group': 'model'}
                   and count(state()) == 240, 'main and floating filters are independent')
+            send({'action': 'floating-settings', 'patch': {'edgeMetric': 'used'}})
+            until(lambda: send({'action': 'inspect'}, pipe + '-main').get('floatingEdgeMetric') == 'used', 'host state push')
+            check(True, 'host pushes floating-only settings to the main panel without its polling timer')
             for mode in ('both', 'float', 'tray'):
                 switched = send({'action': 'mode', 'value': mode})
                 check(switched['mainPID'] == main_pid and switched['settings']['mode'] == mode,

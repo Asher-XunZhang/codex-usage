@@ -46,8 +46,7 @@ internal static class CapsulePlacement
         // Strict comparison gives corners a stable Left, Right, Top, Bottom tie order.
         foreach (var candidate in candidates)
         {
-            if (candidate.Distance > 16 + Epsilon || candidate.Distance >= nearest
-                || SharedSeam(compact, monitor, monitors, candidate.Edge)) continue;
+            if (candidate.Distance > 16 + Epsilon || candidate.Distance >= nearest) continue;
             nearest = candidate.Distance;
             selected = candidate.Edge;
         }
@@ -69,55 +68,15 @@ internal static class CapsulePlacement
         return new(x, y, compact.Width, compact.Height);
     }
 
-    public static Rect Indicator(Rect compact, Rect work, CapsuleEdge edge, DpiScale dpi)
+    public static Rect Indicator(Rect compact, Rect work, CapsuleEdge edge, DpiScale dpi, bool showsMonitor = false)
     {
         if (!Usable(compact) || !Usable(work)
             || edge is not (CapsuleEdge.Left or CapsuleEdge.Right or CapsuleEdge.Top or CapsuleEdge.Bottom)) return Rect.Empty;
         bool vertical = edge is CapsuleEdge.Left or CapsuleEdge.Right;
-        double width = (vertical ? 28 : 76) * Scale(dpi.DpiScaleX);
-        double height = (vertical ? 72 : 28) * Scale(dpi.DpiScaleY);
+        double width = (vertical ? 44 : showsMonitor ? 124 : 88) * Scale(dpi.DpiScaleX);
+        double height = (vertical ? showsMonitor ? 96 : 68 : 28) * Scale(dpi.DpiScaleY);
         return CompactAtEdge(new(compact.Left + compact.Width / 2 - width / 2,
             compact.Top + compact.Height / 2 - height / 2, width, height), work, edge);
-    }
-
-    private static bool SharedSeam(Rect compact, CapsuleMonitor monitor, IReadOnlyList<CapsuleMonitor> monitors, CapsuleEdge edge)
-    {
-        var bounds = monitor.Bounds; var work = monitor.Work;
-        bool vertical = edge is CapsuleEdge.Left or CapsuleEdge.Right;
-        double boundary = edge switch
-        {
-            CapsuleEdge.Left => bounds.Left,
-            CapsuleEdge.Right => bounds.Right,
-            CapsuleEdge.Top => bounds.Top,
-            _ => bounds.Bottom
-        };
-        double workBoundary = edge switch
-        {
-            CapsuleEdge.Left => work.Left,
-            CapsuleEdge.Right => work.Right,
-            CapsuleEdge.Top => work.Top,
-            _ => work.Bottom
-        };
-        // A taskbar's inset work edge is an actual docking edge, even with a
-        // monitor beyond the corresponding physical display boundary.
-        if (Math.Abs(boundary - workBoundary) > Epsilon) return false;
-        double center = vertical ? compact.Top + compact.Height / 2 : compact.Left + compact.Width / 2;
-        foreach (var other in monitors)
-        {
-            if (other.Id == monitor.Id || !Usable(other.Bounds)) continue;
-            double opposite = edge switch
-            {
-                CapsuleEdge.Left => other.Bounds.Right,
-                CapsuleEdge.Right => other.Bounds.Left,
-                CapsuleEdge.Top => other.Bounds.Bottom,
-                _ => other.Bounds.Top
-            };
-            if (Math.Abs(boundary - opposite) > Epsilon) continue;
-            double start = vertical ? Math.Max(bounds.Top, other.Bounds.Top) : Math.Max(bounds.Left, other.Bounds.Left);
-            double end = vertical ? Math.Min(bounds.Bottom, other.Bounds.Bottom) : Math.Min(bounds.Right, other.Bounds.Right);
-            if (center >= start && center < end) return true;
-        }
-        return false;
     }
 
     private static double Scale(double value) => double.IsFinite(value) && value > 0 ? value : 1;

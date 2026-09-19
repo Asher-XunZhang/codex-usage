@@ -21,9 +21,8 @@ internal sealed record CapsuleExpandedDragPlacement(Rect Panel, Rect Compact)
         foreach (var (edge, near, _) in candidates.OrderBy(x => x.Item3))
         {
             if (!near) continue;
-            var anchor = CapsulePlacement.CompactAtEdge(compact ?? new Rect(pointer.X - 38 * sx, pointer.Y - 38 * sy, 76 * sx, 76 * sy), work, edge);
-            // Reuse the shared-display seam exclusion from compact docking.
-            if (CapsulePlacement.Dock(anchor, monitor, monitors, dpi) == edge) return edge;
+            // The release pointer ranks the selected display's edges, including shared seams.
+            return edge;
         }
         return CapsuleEdge.None;
     }

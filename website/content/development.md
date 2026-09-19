@@ -1,6 +1,6 @@
 # 开发、构建与本地验证
 
-普通使用者直接[下载发行包](./installation.md)，无需开发环境。本页的模块入口适用于整理后的当前源码和 Windows v1.0.2；历史 macOS v1.0.1 tag 仍使用该版本原有目录与命令。
+普通使用者直接[下载发行包](./installation.md)，无需开发环境。本页的模块入口适用于整理后的当前源码和 Windows v1.0.3；历史 macOS v1.0.1 tag 仍使用该版本原有目录与命令。
 
 ## 选择源码版本
 
@@ -11,7 +11,7 @@ git clone https://github.com/Asher-XunZhang/codex-usage.git
 cd codex-usage
 ```
 
-- 重现 Windows 正式包：`git checkout --detach v1.0.2`。
+- 重现 Windows v1.0.3 正式包：使用 Release 标注的 Windows 源码提交，或 ZIP 中的 `source/`；既有 v1.0.3 标签仍对应 macOS 首发源码。
 - 开发新改动：`git switch -c codex/my-change origin/main`。
 - 重现 macOS 旧正式包：`git checkout --detach v1.0.1`，使用[该 tag 的构建文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/BUILDING.md)。不要在旧 tag 中调用下文的新模块路径。
 

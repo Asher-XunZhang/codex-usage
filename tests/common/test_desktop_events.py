@@ -4,7 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import selectors
+import queue
 import subprocess
 import sys
 import tempfile
@@ -46,40 +46,51 @@ class DesktopEventWriterTests(unittest.TestCase):
             writer.close(); writer.thread.join(2); os.close(read); os.close(write)
 
 
-@unittest.skipUnless(sys.platform == 'darwin', 'Native event mode is macOS only')
+@unittest.skipUnless(sys.platform in ('darwin', 'win32'), 'Native event mode requires macOS or Windows')
 class DesktopEventServerTests(unittest.TestCase):
     def test_handshake_scan_and_manual_receipt(self):
         with tempfile.TemporaryDirectory(prefix='desktop event server ') as folder:
             home = Path(folder) / 'home'; home.mkdir()
-            process = subprocess.Popen([sys.executable, '-E', '-s', '-B', str(BACKEND / 'dashboard_server.py'), '--desktop-events', '--port', '0', '--instance-id', 'fixture-events', '--codex-home', str(home), '--cache-path', str(Path(folder) / 'index.sqlite'), '--refresh-seconds', '0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            selector = selectors.DefaultSelector(); selector.register(process.stdout, selectors.EVENT_READ)
-            buffer = bytearray(); pending = []
+            environment = dict(os.environ, CODEX_USAGE_BACKEND_CONTROL_TOKEN='a' * 64)
+            process = subprocess.Popen([sys.executable, '-E', '-s', '-B', str(BACKEND / 'dashboard_server.py'), '--desktop-events', '--port', '0', '--instance-id', 'fixture-events', '--codex-home', str(home), '--cache-path', str(Path(folder) / 'index.sqlite'), '--refresh-seconds', '0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+            pending = queue.Queue()
+            def read_events():
+                while True:
+                    line = process.stdout.readline(4097)
+                    pending.put(line)
+                    if not line: return
+            reader = threading.Thread(target=read_events, daemon=True); reader.start()
             def wait_for(predicate):
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
-                    while pending:
-                        row = pending.pop(0)
-                        self.assertEqual(row['protocol'], 1)
-                        self.assertEqual(row['instance_id'], 'fixture-events')
-                        if predicate(row): return row
-                    if not selector.select(max(0, deadline - time.monotonic())): break
-                    data = os.read(process.stdout.fileno(), 65536)
-                    if not data: break
-                    buffer.extend(data)
-                    while b'\n' in buffer:
-                        line, _, rest = buffer.partition(b'\n'); buffer[:] = rest
-                        self.assertLessEqual(len(line), 4096); pending.append(json.loads(line))
+                    try: line = pending.get(timeout=max(0, deadline - time.monotonic()))
+                    except queue.Empty: break
+                    if not line: break
+                    self.assertLessEqual(len(line), 4096)
+                    row = json.loads(line)
+                    self.assertEqual(row['protocol'], 1)
+                    self.assertEqual(row['instance_id'], 'fixture-events')
+                    self.assertEqual(row['pid'], process.pid)
+                    if predicate(row): return row
                 self.fail('Timed out waiting for event')
             try:
                 ready = wait_for(lambda row: row['event'] == 'desktop_ready')
                 initial = wait_for(lambda row: row['event'] == 'desktop_state' and row['ready'] and not row['scanning'])
                 self.assertEqual(initial['refresh_completed'], 0)
                 # Zero automatic refresh has no periodic event heartbeat.
-                self.assertFalse(selector.select(0.25))
+                with self.assertRaises(queue.Empty): pending.get(timeout=.25)
                 request = Request(ready['url'] + '/api/refresh', data=b'{"wait_ms":0}', headers={'Content-Type':'application/json', 'X-Codex-Instance':'fixture-events'}, method='POST')
                 with build_opener(ProxyHandler({})).open(request, timeout=5) as response: receipt = json.load(response)
                 done = wait_for(lambda row: row['event'] == 'desktop_state' and row['refresh_completed'] >= receipt['ticket'])
                 self.assertFalse(done['scanning']); self.assertIsNone(done['refresh_error'])
+                if os.name == 'nt':
+                    # No --parent-pid: HTTP shutdown must still wake the idle
+                    # server and preserve the private control-token boundary.
+                    shutdown = Request(ready['url'] + '/api/shutdown', data=b'{}', headers={'Content-Type': 'application/json', 'X-Codex-Instance': 'fixture-events', 'X-Codex-Control': 'a' * 64}, method='POST')
+                    with build_opener(ProxyHandler({})).open(shutdown, timeout=5) as response:
+                        self.assertEqual(response.status, 200)
+                    self.assertEqual(process.wait(timeout=5), 0)
             finally:
-                process.terminate(); process.wait(timeout=5); selector.close()
+                if process.poll() is None: process.terminate()
+                process.wait(timeout=5); reader.join(2)
                 process.stdout.close(); process.stderr.close()

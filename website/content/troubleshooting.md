@@ -1,6 +1,6 @@
 # 故障排查
 
-先确认平台与版本：Windows 当前下载为 v1.0.2，macOS 为 v1.0.3。首次运行步骤见[安装指南](./installation.md)。
+先确认平台与版本：Windows 当前下载为 v1.0.3，macOS 为 v1.0.3。首次运行步骤见[安装指南](./installation.md)。
 
 ## Windows 无法打开或找不到入口 {#windows-startup}
 

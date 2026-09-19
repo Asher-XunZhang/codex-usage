@@ -1,6 +1,6 @@
 # 验证与兼容性
 
-当前正式下载为 **Windows v1.0.2 与 macOS v1.0.3**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
+当前正式下载为 **Windows v1.0.3 与 macOS v1.0.3**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
 
 ## macOS v1.0.3 的验证边界
 
@@ -8,9 +8,9 @@ v1.0.3 在 Apple Silicon 上执行完整回归，并分别构建 arm64、x86_64 
 
 Intel 包在 Apple Silicon 的 Rosetta 环境检查运行组件，尚未进行实体 Intel 验收。系统通知冷启动、完整拔屏／Spaces／休眠及干净设备首次下载信任流程也不能视为本次已通过。详见 [v1.0.3 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.md)。
 
-## Windows v1.0.2 的验证边界
+## Windows v1.0.3 的验证边界
 
-Windows 开发与交互验证在 Windows 11 x64 上进行。自动化检查使用合成用量、预算、任务与独立配置，覆盖以下范围：
+Windows 开发与交互验证在 Windows 11 x64 上进行。v1.0.3 增加弧线配色、动态侧签、通知范围和状态事件检查；系统通知冷启动与实体多屏仍需按设备验证。自动化检查使用合成用量、预算、任务与独立配置，覆盖以下范围：
 
 - 统计查询、筛选与导出；预算周期、草稿保存和错误恢复。
 - 主面板、浮窗、托盘详情的深浅主题、文字边界和键盘操作。
@@ -20,7 +20,7 @@ Windows 开发与交互验证在 Windows 11 x64 上进行。自动化检查使�
 
 合成多屏矩形可验证几何规则，不能代表每一种真实显示器与缩放组合。后台模式会明确跳过可见菜单、焦点等前台检查，跳过不算通过。任务通知的系统提交、通知中心保存、横幅显示与用户点击是不同结果，Windows 勿扰和前台状态仍可能限制实际显示。
 
-正式资产和说明见 [Windows v1.0.2 发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.2)。具体源码阶段记录和验证命令见[Windows 工程文档](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/windows/README.md)。历史测试数量和某次预览结果不自动代表后来发行包已重新通过同一套实机检查。
+正式资产和说明见 [Windows v1.0.3 发行页](https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.3)。具体源码阶段记录和验证命令见[Windows 工程文档](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/windows/README.md)。历史测试数量和某次预览结果不自动代表后来发行包已重新通过同一套实机检查。
 
 本页不承诺所有 Windows 版本、ARM64 环境、全部多屏组合、组织限制下的通知或固定内存上限。Windows 工作集、私有内存与下文 macOS 的 physical footprint 不可直接横向比较。
 

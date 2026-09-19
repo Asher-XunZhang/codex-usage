@@ -92,16 +92,16 @@ internal static class CapsuleExpandedDragPlacementTests
             var neighbor = new CapsuleMonitor("right", new(0, -200 * scale, 1920 * scale, 1080 * scale), new(0, -200 * scale, 1920 * scale, 1040 * scale));
             var seamPointer = new Point(-5 * scale, 400 * scale);
             var seamPanel = CapsuleExpandedDragPlacement.AtPointer(seamPointer, new(168, 205), new(), dpi).Panel;
-            Check(CapsuleExpandedDragPlacement.DropEdge(seamPanel, seamPointer, monitor, new[] { monitor, neighbor }, dpi) == CapsuleEdge.None,
-                $"expanded-drop-does-not-dock-at-connected-monitor-seam-{scale}");
+            Check(CapsuleExpandedDragPlacement.DropEdge(seamPanel, seamPointer, monitor, new[] { monitor, neighbor }, dpi) == CapsuleEdge.Right,
+                $"expanded-drop-docks-at-selected-display-seam-{scale}");
             var interiorPointer = new Point(-1000 * scale, 400 * scale);
             Check(CapsuleExpandedDragPlacement.DropEdge(CapsuleExpandedDragPlacement.AtPointer(interiorPointer, new(168, 205), new(), dpi).Panel,
                 interiorPointer, monitor, new[] { monitor }, dpi) == CapsuleEdge.None, $"interior-drop-retains-free-position-{scale}");
         }
         var staggeredMain = new CapsuleMonitor("main", new(0, 0, 1920, 1080), new(0, 0, 1920, 1080));
         var staggeredNeighbor = new CapsuleMonitor("short", new(1920, 0, 1200, 540), new(1920, 0, 1200, 540));
-        Check(CapsuleExpandedDragPlacement.DropEdge(new(1680, 300, 336, 410), new(1890, 690), staggeredMain, new[] { staggeredMain, staggeredNeighbor }, new(1, 1), new(1844, 300, 76, 76)) == CapsuleEdge.None,
-            "staggered-monitor-seam-uses-final-compact-anchor-not-footer-pointer");
+        Check(CapsuleExpandedDragPlacement.DropEdge(new(1680, 300, 336, 410), new(1890, 690), staggeredMain, new[] { staggeredMain, staggeredNeighbor }, new(1, 1), new(1844, 300, 76, 76)) == CapsuleEdge.Right,
+            "staggered-monitor-seam-remains-dockable-for-footer-drag");
         Check(CapsuleExpandedDragPlacement.DropEdge(new(1680, 300, 336, 410), new(1890, 330), staggeredMain, new[] { staggeredMain, staggeredNeighbor }, new(1, 1), new(1844, 634, 76, 76)) == CapsuleEdge.Right,
             "staggered-monitor-exposed-edge-uses-final-compact-anchor-not-header-pointer");
         return J.Obj(("success", failures.Count == 0), ("checks", checks), ("failures", failures));

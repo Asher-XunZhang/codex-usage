@@ -34,6 +34,18 @@ internal static class TaskMonitorMessageRoutingTests
         view.Update(state); view.SelectMessages();
         Check(view.Inspect().S("filter") == "all" && commands == 0, "no unread messages opens all history despite stale summary count");
 
+        var scopedState = TaskMonitorDemo.State(); var scopedRequests = new List<JsonObject>();
+        var scopedView = new TaskMonitorView(request => { scopedRequests.Add(request.Copy()); scopedState = TaskMonitorDemo.Apply(scopedState, request); return Task.FromResult(scopedState.Copy()); }, _ => { });
+        scopedView.Update(scopedState); scopedView.SelectNotificationMessages(["message-waiting", "removed-message"]);
+        scopedView.Measure(new Size(700, 520)); scopedView.Arrange(new Rect(0, 0, 700, 520)); scopedView.UpdateLayout();
+        Check(scopedRequests.Count == 0 && scopedView.Inspect().S("filter") == "all", "notification entry opens its exact scope including already-read messages without acknowledgment");
+        var markNotification = Descendants<Button>(scopedView).Single(x => x.Content?.ToString() == "本通知全部标为已读");
+        markNotification.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(scopedRequests.Count == 1 && !scopedRequests[0].O("payload").B("all") && scopedRequests[0].O("payload").A("ids").Select(x => x?.ToString()).ToHashSet().SetEquals(new[] { "message-waiting", "removed-message" }), "notification read action cannot acknowledge unrelated or newly arriving messages");
+        Check(scopedState.O("monitor").A("messages").Rows().Any(x => x.S("id") != "message-waiting" && !x.B("read")), "notification read keeps unrelated messages unread");
+        Descendants<Button>(scopedView).Single(x => x.Content?.ToString() == "查看全部历史").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(scopedView.Inspect()["notificationIDs"] is null && scopedRequests.Count == 1, "return to all history clears notification scope without new read commands");
+
         string? oldBackground = Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND");
         MainWindow? startup = null, existing = null;
         try
@@ -51,6 +63,9 @@ internal static class TaskMonitorMessageRoutingTests
             await existing.Handle(J.Obj(("action", "focus"), ("page", "monitor"), ("monitorList", "messages")));
             var focused = await existing.Handle(J.Obj(("action", "inspect")));
             Check(focused.O("monitor").B("messages") && !focused.O("monitor").B("detail") && focused.O("monitor").S("filter") == "unread", "existing-window focus switches from task detail to unread list");
+            await existing.Handle(J.Obj(("action", "focus"), ("page", "monitor"), ("monitorList", "notification:message-waiting,removed-message")));
+            var notification = await existing.Handle(J.Obj(("action", "inspect")));
+            Check(notification.O("monitor").A("notificationIDs").Count == 2 && !notification.O("monitor").B("detail"), "existing-window notification activation opens batch list and retains missing identity");
             foreach (var message in unread.O("monitor").A("messages").Rows()) message["read"] = true;
             // The main panel is intentionally still showing the old unread snapshot.
             // The host's focus envelope must supply and apply the latest state first.

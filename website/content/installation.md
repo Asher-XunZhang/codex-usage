@@ -4,11 +4,11 @@
 
 | 平台 | 正式下载 |
 | --- | --- |
-| Windows x64 · v1.0.2 | [下载 Windows ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip) |
+| Windows x64 · v1.0.3 | [下载 Windows ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip) |
 | macOS Apple Silicon · v1.0.3 | [下载 Apple Silicon ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip) |
 | macOS Intel · v1.0.3 | [下载 Intel ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip) |
 
-macOS v1.0.3 提供两个架构安装包，Windows 保留 v1.0.2。[两端功能差异 →](./platforms.md)
+macOS v1.0.3 提供两个架构安装包，Windows 同步提供 v1.0.3 x64 包。[两端功能差异 →](./platforms.md)
 
 ## Windows：解压后运行 {#windows}
 
@@ -27,10 +27,10 @@ macOS v1.0.3 提供两个架构安装包，Windows 保留 v1.0.2。[两端功能
 
 ### Windows 下载校验
 
-发行页提供 [Windows ZIP 的 SHA-256 文件](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip.sha256)。在 PowerShell 中计算下载文件摘要，与该文件核对：
+发行页提供 [Windows ZIP 的 SHA-256 文件](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip.sha256)。在 PowerShell 中计算下载文件摘要，与该文件核对：
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\codex-usage-desktop-v1.0.2-windows-x64.zip"
+Get-FileHash -Algorithm SHA256 -LiteralPath "$env:USERPROFILE\Downloads\codex-usage-desktop-v1.0.3-windows-x64.zip"
 ```
 
 如果下载到其他目录，替换示例路径。摘要不符时重新下载完整 ZIP。

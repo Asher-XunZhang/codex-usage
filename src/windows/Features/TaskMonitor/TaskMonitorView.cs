@@ -35,6 +35,7 @@ internal sealed class TaskMonitorView : UserControl
     private readonly ComboBox filter = new() { Width = 138, MinHeight = 34 };
     private readonly ComboBox focus = new() { Width = 270, MinHeight = 34, MaxDropDownHeight = 300 };
     private readonly HashSet<string> selectedMessages = new(StringComparer.Ordinal);
+    private HashSet<string>? notificationMessages;
     private readonly List<(TextBlock text, JsonObject task, string prefix)> elapsedLabels = new();
     private readonly Button markSelected, markAll, clearHistory;
     private bool rebuilding, busy, messages, menuOpen;
@@ -76,7 +77,7 @@ internal sealed class TaskMonitorView : UserControl
         focus.DropDownClosed += (_, _) => Render();
         watchingTab.Click += (_, _) => SelectList(false); messagesTab.Click += (_, _) => SelectList(true);
         markSelected = TaskMonitorUi.Button("所选标为已读", async () => { await Command("read", J.Obj(("ids", Strings(selectedMessages)))); selectedMessages.Clear(); RenderItems(); }, 110);
-        markAll = TaskMonitorUi.Button("全部标为已读", async () => await Command("read", J.Obj(("all", true))), 110);
+        markAll = TaskMonitorUi.Button("全部标为已读", async () => await Command("read", notificationMessages is null ? J.Obj(("all", true)) : J.Obj(("ids", Strings(notificationMessages)))), 144);
         clearHistory = TaskMonitorUi.Button("清理已读历史", async () => await Command("clear-history"), 110);
         BuildNavigation(); Render();
     }
@@ -119,7 +120,7 @@ internal sealed class TaskMonitorView : UserControl
     {
         // The floating unread entry opens a list, not a message selection. It must
         // not acknowledge messages or retain a search that hides the requested list.
-        SelectList(true);
+        notificationMessages = null; SelectList(true);
         rebuilding = true;
         try
         {
@@ -130,8 +131,14 @@ internal sealed class TaskMonitorView : UserControl
         finally { rebuilding = false; }
         RenderItems();
     }
+    public void SelectNotificationMessages(IEnumerable<string> ids)
+    {
+        notificationMessages = ids.Where(x => x.Length > 0).ToHashSet(StringComparer.Ordinal);
+        search.Text = ""; SelectList(true);
+    }
     private void SelectList(bool showMessages)
     {
+        if (!showMessages) notificationMessages = null;
         selected = selectedMessage = ""; messages = showMessages; selectedMessages.Clear();
         BuildNavigation(); Render(); scroller.ScrollToTop(); ViewingChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -146,7 +153,13 @@ internal sealed class TaskMonitorView : UserControl
                 ? new TaskMonitorUi.Choice[] { new("all", "全部消息"), new("unread", "未读"), new("attention", "仍需处理") }
                 : new TaskMonitorUi.Choice[] { new("all", "全部状态"), new("running", "正在执行"), new("waiting", "等待处理"), new("unknown", "状态待确认"), new("idle", "等待新一轮") };
             filter.SelectedIndex = 0; toolbar.Children.Add(filter);
-            if (messages) foreach (var button in new[] { markSelected, markAll, clearHistory }) { button.Margin = new Thickness(0, 0, 8, 6); toolbar.Children.Add(button); }
+            if (messages)
+            {
+                markAll.Content = notificationMessages is null ? "全部标为已读" : "本通知全部标为已读";
+                foreach (var button in new[] { markSelected, markAll }) { button.Margin = new Thickness(0, 0, 8, 6); toolbar.Children.Add(button); }
+                if (notificationMessages is null) toolbar.Children.Add(clearHistory);
+                else toolbar.Children.Add(TaskMonitorUi.Button("查看全部历史", () => { notificationMessages = null; SelectList(true); }, 112));
+            }
             else
             {
                 var group = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
@@ -163,7 +176,7 @@ internal sealed class TaskMonitorView : UserControl
         try
         {
             var monitor = Monitor; var counts = monitor.O("summary");
-            heading.Text = selected.Length > 0 ? "任务详情" : "任务监控";
+            heading.Text = selected.Length > 0 ? "任务详情" : notificationMessages is not null ? "本次通知消息" : "任务监控";
             summary.Text = $"监控中 {counts.I("active")} · 需处理 {counts.I("attention")} · 未读 {counts.I("unread")}　·　本轮结束不等于整个需求完成";
             if (headingActions.Children.Count == 0 || (headingActions.Children.Count == 3) != (selected.Length > 0))
             {
@@ -269,10 +282,13 @@ internal sealed class TaskMonitorView : UserControl
     private void RenderMessages()
     {
         string mode = (filter.SelectedItem as TaskMonitorUi.Choice)?.Id ?? "all";
-        var items = Monitor.A("messages").Rows().Where(Matches).Where(x => mode != "unread" || !x.B("read")).Where(x => mode != "attention" || IsPending(x)).OrderByDescending(x => TaskMonitorUi.Timestamp(x["createdAt"])).ToList();
-        var allIDs = Monitor.A("messages").Rows().Select(x => x.S("id")).ToHashSet(); selectedMessages.IntersectWith(allIDs);
-        markSelected.IsEnabled = selectedMessages.Count > 0 && !busy; markAll.IsEnabled = Monitor.O("summary").I("unread") > 0 && !busy;
+        var scoped = Monitor.A("messages").Rows().Where(x => notificationMessages is null || notificationMessages.Contains(x.S("id"))).ToArray();
+        var items = scoped.Where(Matches).Where(x => mode != "unread" || !x.B("read")).Where(x => mode != "attention" || IsPending(x)).OrderByDescending(x => TaskMonitorUi.Timestamp(x["createdAt"])).ToList();
+        var allIDs = scoped.Select(x => x.S("id")).ToHashSet(); selectedMessages.IntersectWith(allIDs);
+        markSelected.IsEnabled = selectedMessages.Count > 0 && !busy; markAll.IsEnabled = scoped.Any(x => !x.B("read")) && !busy;
         clearHistory.IsEnabled = Monitor.A("messages").Rows().Any(x => x.B("read") && !IsPending(x)) && !busy;
+        if (notificationMessages is not null)
+            list.Children.Add(TaskMonitorUi.Text($"仅显示本通知关联的 {scoped.Length} 条消息；查看列表不会标为已读。" + (scoped.Length < notificationMessages.Count ? "部分关联记录已清理或不再可用。" : ""), 12));
         if (items.Count == 0) list.Children.Add(TaskMonitorUi.Card(TaskMonitorUi.Text("没有符合当前筛选的消息。监控列表和 Hover 不会自动确认已读。", 13)));
         foreach (var message in items)
         {
@@ -368,7 +384,7 @@ internal sealed class TaskMonitorView : UserControl
     }
     private static JsonArray Strings(IEnumerable<string> values) => new(values.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
 
-    internal JsonObject Inspect() => J.Obj(("detail", IsViewingDetail), ("taskID", selected), ("messageID", selectedMessage), ("messages", messages), ("filter", (filter.SelectedItem as TaskMonitorUi.Choice)?.Id ?? "all"), ("search", search.Text), ("feedback", feedback.Text), ("width", ActualWidth), ("height", ActualHeight));
+    internal JsonObject Inspect() => J.Obj(("detail", IsViewingDetail), ("taskID", selected), ("messageID", selectedMessage), ("messages", messages), ("notificationIDs", notificationMessages?.ToArray()), ("filter", (filter.SelectedItem as TaskMonitorUi.Choice)?.Id ?? "all"), ("search", search.Text), ("feedback", feedback.Text), ("width", ActualWidth), ("height", ActualHeight));
 }
 
 internal static class TaskMonitorUi

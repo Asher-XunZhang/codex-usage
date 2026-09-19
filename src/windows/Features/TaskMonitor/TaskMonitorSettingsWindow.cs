@@ -53,7 +53,7 @@ internal sealed class TaskMonitorSettingsWindow : Window
         body.Children.Add(TaskMonitorUi.Text("仅影响任务提醒，不暂停预算提醒；不会自动展开浮窗或抢走游戏焦点。", 11));
         Divider("新监控与消息记录");
         mode = Picker("默认提醒范围", [new("once", "仅本轮结束后提醒"), new("each", "每轮结束都提醒")], original.S("defaultMode", "once"));
-        retention = Picker("已读历史保留", [new("7", "7 天"), new("30", "30 天"), new("90", "90 天")], original.I("retentionDays", 30).ToString());
+        retention = Picker("已读历史保留", [new("7", "7 天"), new("30", "30 天"), new("90", "90 天"), new("365", "365 天")], original.I("retentionDays", 30).ToString());
         body.Children.Add(TaskMonitorUi.Text("未读和仍需处理的消息不自动清理；退出 Codex 用量后停止后台监控，重新启动时核对离线记录。", 11));
         Divider("提醒诊断");
         body.Children.Add(TaskMonitorUi.Text(TaskMonitorUi.Capabilities(caps), 11));

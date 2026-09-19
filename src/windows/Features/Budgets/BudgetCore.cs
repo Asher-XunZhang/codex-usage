@@ -17,6 +17,11 @@ internal sealed class BudgetStore
     public JsonObject Recovery => J.Obj(("required", unreadable), ("path", path), ("backupPath", recoveryBackup));
     public JsonArray PendingAlerts => J.Array(ledger.Rows().Where(x => !x.B("acknowledged")));
     public JsonArray Events => J.Array(ledger.Rows().Where(x => !x.B("suppressed")).OrderByDescending(x => x.N("createdAt") ?? 0).Take(20));
+    internal JsonObject[] NotificationAlerts(JsonArray tags)
+    {
+        var ids = tags.Select(x => x?.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
+        return ledger.Rows().Where(x => ids.Contains(TaskNotifications.TagFor(x.S("id")))).Select(x => x.Copy()).ToArray();
+    }
     private JsonObject runtime = new();
     private JsonArray ledger = new();
     private readonly string path;
@@ -151,6 +156,22 @@ internal sealed class BudgetStore
                         state["pausedUntil"] = payload.S("mode") == "cycle" || payload.B("period") ? period.End : Math.Min(time + seconds, period.End); break;
                     }
                 case "resume": { var state = State(Locate(payload).S("id")); state.Remove("pausedUntil"); state.Remove("pausePeriod"); break; }
+                case "pause-notification":
+                    {
+                        int changed = 0;
+                        foreach (var alert in NotificationAlerts(payload.A("ids")).DistinctBy(x => x.S("ruleID")))
+                        {
+                            var rule = Rules.Rows().FirstOrDefault(x => x.S("id") == alert.S("ruleID"));
+                            if (rule is null) continue;
+                            var period = Period(Effective(rule, time), time);
+                            // A notification retained from an older cycle cannot pause a new cycle.
+                            if (period is null || period.Id != alert.S("periodID") || time >= (alert.N("periodEnd") ?? 0)) continue;
+                            var state = State(rule.S("id")); state["pausePeriod"] = period.Id;
+                            state["pausedUntil"] = payload.S("mode") == "cycle" ? period.End : Math.Min(time + 1800, period.End); changed++;
+                        }
+                        if (changed == 0) throw Invalid("本通知关联的预算周期已结束或记录已移除；未更改当前提醒。请打开预算查看。");
+                        break;
+                    }
                 case "acknowledge":
                     {
                         var ids = payload.A("ids").Select(x => x?.GetValue<string>()).ToHashSet(StringComparer.Ordinal);

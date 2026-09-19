@@ -25,6 +25,9 @@ internal sealed class DashboardClient : IAsyncDisposable
     private Task? stderrDrain, stdoutDrain;
     private string lastError = "";
     private bool disposed;
+    private BackendEventChannel? events;
+    public event Action? Updated;
+    public JsonObject? Snapshot() => events?.Snapshot();
     public bool Running => process is { HasExited: false } && endpoint != null;
 
     public async Task Start(string codexHome, string cache, int refresh, CancellationToken token, bool force = false)
@@ -46,33 +49,19 @@ internal sealed class DashboardClient : IAsyncDisposable
                 "-E", "-s", "-B", Path.Combine(Paths.Backend, "dashboard_server.py"),
                 "--port", "0", "--codex-home", codexHome, "--cache-path", cache,
                 "--state-file", statePath, "--instance-id", identity, "--parent-pid", Environment.ProcessId.ToString(),
-                "--refresh-seconds", refresh.ToString());
+                "--refresh-seconds", refresh.ToString(), "--desktop-events");
             process.StandardInput.Close();
             lastError = "";
             stderrDrain = Drain(process.StandardError, true);
-            stdoutDrain = Drain(process.StandardOutput, false);
+            var channel = new BackendEventChannel(process.Id, identity);
+            events = channel;
+            channel.Changed += () => { if (ReferenceEquals(events, channel)) Updated?.Invoke(); };
+            stdoutDrain = channel.Read(process.StandardOutput);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
             deadline.CancelAfter(TimeSpan.FromSeconds(35));
-            while (true)
-            {
-                deadline.Token.ThrowIfCancellationRequested();
-                if (process.HasExited) throw new IOException(lastError.Length > 0 ? lastError : "统计服务已退出");
-                try
-                {
-                    var state = J.Read(statePath, 4096);
-                    if (state.I("pid") == process.Id && Uri.TryCreate(state.S("url"), UriKind.Absolute, out var uri)
-                        && uri.Scheme == "http" && uri.Host == "127.0.0.1" && uri.Port > 0)
-                    {
-                        endpoint = uri;
-                        await Health(deadline.Token);
-                        return;
-                    }
-                }
-                catch (IOException) { }
-                catch (System.Text.Json.JsonException) { }
-                catch (HttpRequestException) { }
-                await Task.Delay(80, deadline.Token);
-            }
+            var ready = await channel.Wait(true, -1, deadline.Token);
+            endpoint = new Uri(ready.S("url"));
+            await Health(deadline.Token);
         }
         catch { await StopCore(); throw; }
         finally { lifecycle.Release(); }
@@ -112,20 +101,15 @@ internal sealed class DashboardClient : IAsyncDisposable
 
     public async Task<JsonObject> Refresh(CancellationToken token)
     {
+        var channel = events ?? throw new IOException("统计服务尚未就绪");
         var result = await Post("api/refresh", J.Obj(("wait_ms", 0)), token);
         int ticket = result.I("ticket", -1);
         if (ticket < 0) throw new IOException("统计服务返回了无效的刷新请求");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromSeconds(120));
-        while (true)
-        {
-            var health = await Health(deadline.Token);
-            if (health.I("refresh_completed", -1) >= ticket)
-            {
-                if (health.S("refresh_error").Length > 0) throw new IOException(health.S("refresh_error"));
-                return health;
-            }
-            await Task.Delay(200, deadline.Token);
-        }
+        var health = await channel.Wait(false, ticket, deadline.Token);
+        if (!ReferenceEquals(events, channel)) throw new IOException("统计服务已切换，请重新刷新");
+        if (health.S("refresh_error").Length > 0) throw new IOException(health.S("refresh_error"));
+        return health;
     }
     private Uri Address(string path) => new(endpoint ?? throw new IOException("统计服务尚未就绪"), path);
     private async Task<JsonObject> Get(string path, CancellationToken token)
@@ -144,6 +128,8 @@ internal sealed class DashboardClient : IAsyncDisposable
     }
     private async Task StopCore()
     {
+        var previousEvents = events; events = null;
+        previousEvents?.Stop("统计服务已关闭或切换");
         if (Running)
         {
             try { using var timeout = new CancellationTokenSource(1200); await Post("api/shutdown", new(), timeout.Token); }
@@ -155,6 +141,8 @@ internal sealed class DashboardClient : IAsyncDisposable
             catch (OperationCanceledException) { }
         }
         job?.Dispose(); job = null;
+        if (stdoutDrain != null) { try { await stdoutDrain.WaitAsync(TimeSpan.FromSeconds(2)); } catch (Exception) { } stdoutDrain = null; }
+        if (stderrDrain != null) { try { await stderrDrain.WaitAsync(TimeSpan.FromSeconds(2)); } catch (Exception) { } stderrDrain = null; }
         process?.Dispose(); process = null; endpoint = null;
         try { if (statePath.Length > 0 && File.Exists(statePath)) File.Delete(statePath); } catch (IOException) { }
         statePath = ""; controlToken = "";

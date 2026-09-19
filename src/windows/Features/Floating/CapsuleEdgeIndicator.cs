@@ -8,7 +8,7 @@ using System.Windows.Media;
 namespace CodexUsage;
 
 internal sealed record CapsuleEdgeDisplay(string Label, string Number, string Percent, string Name,
-    double? RemainingFraction, double? Fraction, bool Used, bool Stale, bool Light, string TaskStatus = "")
+    double? RemainingFraction, double? Fraction, bool Used, bool Stale, bool Light, string TaskStatus = "", int Unread = 0, bool ShowsMonitor = false)
 {
     // A used-percent view must still turn red when little quota remains.
     public Color HealthColor => RemainingFraction is double remaining ? CapsuleColors.Color(remaining, Light) :
@@ -29,7 +29,7 @@ internal sealed record CapsuleEdgeDisplay(string Label, string Number, string Pe
         string name = budget ? display!.Name : CapsuleUsageDisplay.Name;
         string prefix = budget ? "预算" : CompactName(name);
         return new(prefix + (used ? "用" : "余"), number, number + (fraction is null ? "" : "%"), name,
-            remaining, fraction, used, budget ? display!.Stale : quota.B("stale", true), light, TaskMonitorVisual.SummaryStatus(state));
+            remaining, fraction, used, budget ? display!.Stale : quota.B("stale", true), light, TaskMonitorVisual.SummaryStatus(state), CapsuleMonitorBadge.Unread(state), CapsuleMonitorBadge.ShowsDockedMonitor(state));
     }
 
     private static string CompactName(string name)
@@ -51,12 +51,13 @@ internal static class CapsuleEdgeIndicator
     private readonly record struct CacheKey(Size Size, CapsuleEdge Edge, CapsuleEdgeDisplay Display, double Dpi);
     private static readonly Dictionary<CacheKey, DrawingGroup> Cache = new();
 
-    public static Geometry Shape(Size size, CapsuleEdge edge) => Valid(size) && edge != CapsuleEdge.None ? Shape(new Rect(size), edge) : Geometry.Empty;
+    public static Geometry Shape(Size size, CapsuleEdge edge, double docking = 1) => Valid(size) && edge != CapsuleEdge.None ? Shape(new Rect(size), edge, docking) : Geometry.Empty;
 
-    public static void Draw(DrawingContext dc, Size size, CapsuleEdge edge, JsonObject state, double pixelsPerDip)
+    public static void Draw(DrawingContext dc, Size size, CapsuleEdge edge, JsonObject state, double pixelsPerDip, double docking = 1)
     {
         if (!Valid(size) || edge == CapsuleEdge.None) return;
         double dpi = double.IsFinite(pixelsPerDip) && pixelsPerDip > 0 ? pixelsPerDip : 1;
+        if (docking < 1) { Paint(dc, size, edge, CapsuleEdgeDisplay.From(state), dpi, docking); return; }
         var key = new CacheKey(size, edge, CapsuleEdgeDisplay.From(state), dpi);
         if (!Cache.TryGetValue(key, out var drawing))
         {
@@ -72,29 +73,33 @@ internal static class CapsuleEdgeIndicator
 
     private static bool Valid(Size size) => double.IsFinite(size.Width) && double.IsFinite(size.Height) && size.Width > 0 && size.Height > 0;
 
-    private static Geometry Shape(Rect bounds, CapsuleEdge edge)
+    private static Geometry Shape(Rect bounds, CapsuleEdge edge, double docking = 1)
     {
-        double radius = Math.Min(8, Math.Min(bounds.Width, bounds.Height) / 2);
-        double tl = edge is CapsuleEdge.Right or CapsuleEdge.Bottom ? radius : 0;
-        double tr = edge is CapsuleEdge.Left or CapsuleEdge.Bottom ? radius : 0;
-        double br = edge is CapsuleEdge.Left or CapsuleEdge.Top ? radius : 0;
-        double bl = edge is CapsuleEdge.Right or CapsuleEdge.Top ? radius : 0;
+        // Canonical bottom-docked crest; the same six cubic segments define paint and hit testing.
+        Point Map(double x, double y)
+        {
+            (double px, double py) = edge switch
+            {
+                CapsuleEdge.Top => (x, 1 - y), CapsuleEdge.Left => (1 - y, x),
+                CapsuleEdge.Right => (y, x), _ => (x, y)
+            };
+            return new(bounds.Left + px * bounds.Width, bounds.Top + py * bounds.Height);
+        }
+        double t = Math.Clamp(docking, 0, 1);
+        var ends = new (double x, double y)[] { (.20, .28), (.5, 0), (.80, .28), (1, 1), (.5, 1), (0, 1) };
+        var controls = new (double x1, double y1, double x2, double y2)[] { (.10, 1, .11, .54), (.29, .02, .39, 0), (.61, 0, .71, .02), (.89, .54, .90, 1), (.84, 1, .67, 1), (.33, 1, .16, 1) };
+        var angles = new[] { Math.PI, Math.PI * 1.25, Math.PI * 1.5, Math.PI * 1.75, Math.PI * 2, Math.PI * 2.5, Math.PI * 3 };
+        Point Mixed(double x, double y, double tx, double ty) => Map(x + (tx - x) * t, y + (ty - y) * t);
         var geometry = new StreamGeometry();
         using (var path = geometry.Open())
         {
-            path.BeginFigure(new(bounds.Left + tl, bounds.Top), true, true);
-            path.LineTo(new(bounds.Right - tr, bounds.Top), true, false);
-            Corner(new(bounds.Right, bounds.Top + tr), tr);
-            path.LineTo(new(bounds.Right, bounds.Bottom - br), true, false);
-            Corner(new(bounds.Right - br, bounds.Bottom), br);
-            path.LineTo(new(bounds.Left + bl, bounds.Bottom), true, false);
-            Corner(new(bounds.Left, bounds.Bottom - bl), bl);
-            path.LineTo(new(bounds.Left, bounds.Top + tl), true, false);
-            Corner(new(bounds.Left + tl, bounds.Top), tl);
-            void Corner(Point end, double r)
+            path.BeginFigure(Mixed(0, .5, 0, 1), true, true);
+            for (int i = 0; i < 6; i++)
             {
-                if (r > 0) path.ArcTo(end, new(r, r), 0, false, SweepDirection.Clockwise, true, false);
-                else path.LineTo(end, true, false);
+                double a = angles[i], b = angles[i + 1], k = 4d / 3 * Math.Tan((b - a) / 4); var c = controls[i]; var e = ends[i];
+                path.BezierTo(Mixed(.5 + (Math.Cos(a) - k * Math.Sin(a)) / 2, .5 + (Math.Sin(a) + k * Math.Cos(a)) / 2, c.x1, c.y1),
+                    Mixed(.5 + (Math.Cos(b) + k * Math.Sin(b)) / 2, .5 + (Math.Sin(b) - k * Math.Cos(b)) / 2, c.x2, c.y2),
+                    Mixed(.5 + Math.Cos(b) / 2, .5 + Math.Sin(b) / 2, e.x, e.y), true, false);
             }
         }
         geometry.Freeze(); return geometry;
@@ -103,54 +108,34 @@ internal static class CapsuleEdgeIndicator
     private static SolidColorBrush Brush(Color color) { var brush = new SolidColorBrush(color); brush.Freeze(); return brush; }
     private static SolidColorBrush Brush(byte r, byte g, byte b) => Brush(Color.FromRgb(r, g, b));
 
-    private static void Paint(DrawingContext dc, Size size, CapsuleEdge edge, CapsuleEdgeDisplay display, double dpi)
+    private static void Paint(DrawingContext dc, Size size, CapsuleEdge edge, CapsuleEdgeDisplay display, double dpi, double docking = 1)
     {
         var background = display.Light ? Brush(250, 251, 253) : Brush(27, 30, 36);
         var border = display.Light ? Brush(199, 207, 217) : Brush(65, 73, 87);
-        var secondary = display.Light ? Brush(99, 111, 129) : Brush(157, 168, 186);
-        var track = display.Light ? Brush(225, 230, 237) : Brush(51, 59, 72);
-        var accent = Brush(display.HealthColor);
+        var ink = display.Light ? Brush(32, 40, 35) : Brush(245, 247, 246);
         double pixel = 1 / dpi;
-        var shape = Shape(size, edge);
-        dc.PushClip(shape);
-        dc.DrawRectangle(background, null, new Rect(size));
+        var shape = Shape(size, edge, docking);
+        dc.PushClip(shape); dc.DrawRectangle(background, null, new Rect(size));
         var strokeBounds = new Rect(size); strokeBounds.Inflate(-pixel / 2, -pixel / 2);
-        if (strokeBounds.Width > 0 && strokeBounds.Height > 0) dc.DrawGeometry(null, new Pen(border, pixel), Shape(strokeBounds, edge));
+        if (strokeBounds.Width > 0 && strokeBounds.Height > 0) dc.DrawGeometry(null, new Pen(border, pixel), Shape(strokeBounds, edge, docking));
+        dc.PushOpacity(Math.Clamp(docking * 2 - 1, 0, 1));
         bool vertical = edge is CapsuleEdge.Left or CapsuleEdge.Right;
-        Rect label, value, meter, task;
-        Point stale;
-        if (vertical)
+        double centerY = size.Height / 2 + (vertical && display.ShowsMonitor ? -9 : vertical ? 0 : edge == CapsuleEdge.Top ? -1 : 1);
+        string value = display.Percent + (display.Stale && display.Fraction is not null ? "*" : "");
+        double fontSize = vertical ? 11 : 12;
+        var measured = new FormattedText(value, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, ValueFont, fontSize, ink, dpi);
+        double valueWidth = Math.Ceiling(measured.WidthIncludingTrailingWhitespace) + 2;
+        double badgeWidth = display.Unread > 0 ? 36 : 20;
+        double groupWidth = valueWidth + (display.ShowsMonitor && !vertical ? badgeWidth + 6 : 0);
+        double valueX = (size.Width - (vertical ? valueWidth : groupWidth)) / 2;
+        DrawText(dc, value, new(valueX, centerY - 8, valueWidth, 16), fontSize, ValueFont, ink, dpi);
+        if (display.ShowsMonitor)
         {
-            double contentLeft = edge == CapsuleEdge.Left ? 4 : 2;
-            double contentWidth = Math.Max(1, size.Width - 6);
-            label = new(contentLeft, size.Height * .19, contentWidth, 15);
-            value = new(contentLeft, size.Height * .43, contentWidth, 19);
-            stale = new(contentLeft + contentWidth - 2, size.Height - 19);
-            task = new(contentLeft + (contentWidth - 10) / 2, size.Height - 16, 10, 10);
-            meter = new(edge == CapsuleEdge.Left ? 1 : size.Width - 3, 10, 2, Math.Max(1, size.Height - 32));
+            var badge = vertical ? new Rect((size.Width - badgeWidth) / 2, size.Height / 2 + 4, badgeWidth, 13)
+                : new Rect(valueX + valueWidth + 6, centerY - 6.5, badgeWidth, 13);
+            CapsuleMonitorBadge.Draw(dc, badge, display.TaskStatus, display.Unread, display.Light, dpi);
         }
-        else
-        {
-            double top = edge == CapsuleEdge.Top ? 6 : 3;
-            label = new(4, top, 23, 18);
-            value = new(28, top - 1, 31, 20);
-            stale = new(59, edge == CapsuleEdge.Top ? 7 : size.Height - 7);
-            task = new(size.Width - 14, top + 4, 10, 10);
-            meter = new(7, edge == CapsuleEdge.Top ? 1 : size.Height - 3, Math.Max(1, size.Width - 23), 2);
-        }
-        dc.DrawRoundedRectangle(track, null, meter, 1, 1);
-        if (display.Fraction is double fraction && fraction > 0)
-        {
-            var fill = meter;
-            if (vertical) { fill.Height *= fraction; fill.Y = meter.Bottom - fill.Height; }
-            else fill.Width *= fraction;
-            dc.DrawRoundedRectangle(accent, null, fill, 1, 1);
-        }
-        DrawText(dc, !vertical && display.Label.Length > 2 ? display.Used ? "已用" : "剩余" : display.Label, label, vertical ? 8.5 : 9, LabelFont, secondary, dpi);
-        DrawText(dc, display.Percent, value, vertical ? 11.5 : 13, ValueFont, accent, dpi);
-        if (display.Stale) dc.DrawEllipse(secondary, null, stale, 1.2, 1.2);
-        TaskMonitorGlyph.Draw(dc, task, display.TaskStatus, display.Light);
-        dc.Pop();
+        dc.Pop(); dc.Pop();
     }
 
     private static void DrawText(DrawingContext dc, string text, Rect bounds, double size, Typeface font, Brush color, double dpi)

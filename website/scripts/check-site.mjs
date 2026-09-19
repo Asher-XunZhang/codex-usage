@@ -18,7 +18,7 @@ function walk(dir) {
 walk(root)
 for (const page of pages) assert.ok(existsSync(join(root, `${page}.html`)), `Missing page: ${page}`)
 const releases = [
-  'v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip',
+  'v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip',
   'v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip',
   'v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip'
 ]

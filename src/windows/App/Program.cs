@@ -44,6 +44,33 @@ internal static class Program
             catch (Exception e) { if (output is not null) J.Write(output, J.Obj(("error", e.Message))); return 1; }
         }
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; Theme.Initialize();
+        if (args.Contains("--main-push-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await MainPushTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--arc-editor-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await ArcColorEditorTests.RunAsync(Arg("--frames")); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
+        if (args.Contains("--quota-toggle-tests"))
+        {
+            app.Startup += async (_, _) =>
+            {
+                try { var result = await QuotaToggleTests.RunAsync(); if (output != null) J.Write(output, result); app.Shutdown(result.B("success") ? 0 : 1); }
+                catch (Exception e) { if (output != null) J.Write(output, J.Obj(("success", false), ("error", e.ToString()))); app.Shutdown(1); }
+            };
+            return app.Run();
+        }
         if (args.Contains("--monitor-tests"))
         {
             try { TaskMonitorTests.Run(); TaskNotificationTests.Run(); var header = TaskMonitorHeaderTests.Run(); if (output != null) J.Write(output, J.Obj(("success", header.B("success")), ("checks", "task-monitor-core-and-notification-policy"), ("header", header))); return header.B("success") ? 0 : 1; }
@@ -366,7 +393,7 @@ internal static class SelfTests
 {
     public static void Run(string? output)
     {
-        ReliabilityTests.Run(); BudgetTests.Run(); MainTests.Run(); CapsuleTests.Run(); TrayTests.Run();
+        ReliabilityTests.Run(); BudgetTests.Run(); MainTests.Run(); CapsuleTests.Run(); TrayTests.Run(); CapsuleArcStyleTests.Run();
         var placement = CapsulePlacementTests.Run(); var indicator = CapsuleEdgeIndicatorTests.Run(); var morph = CapsuleMorphGeometryTests.Run();
         if (J.Number(JsonValue.Create(42)) != 42 || J.Number(JsonValue.Create(true)) is not null) throw new Exception("JSON numeric types");
         if (CapsuleColors.Color(.5, false) != System.Windows.Media.Color.FromRgb(233, 188, 96) || CapsuleColors.Color(.05, true) != System.Windows.Media.Color.FromRgb(212, 71, 79)) throw new Exception("Quota colors");

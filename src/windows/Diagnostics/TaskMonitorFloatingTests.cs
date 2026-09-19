@@ -180,6 +180,23 @@ internal static class TaskMonitorFloatingTests
                     Check(surface.VisibleTextBounds.All(x => x.Text != CapsuleBudgetDisplay.From(state).Name && x.Text != "剩余" && x.Text != "预算剩余"), "monitor-expanded-never-reuses-budget-name-or-battery-label");
                     surface.Expansion = 0; surface.Redraw();
                     Check(surface.VisibleTextBounds.Any(x => x.Text == CapsuleBudgetDisplay.From(state).Name) && surface.VisibleTextBounds.Any(x => x.Text == "余量"), "monitor-compact-still-displays-last-budget-context");
+                    var overdrawn = state.Copy(); SetUnread(overdrawn, 137);
+                    var overdrawnBudget = overdrawn.O("budgets").A("summaries").Rows().First();
+                    overdrawn.O("settings").O("floating")["budgetID"] = overdrawnBudget.S("id");
+                    overdrawnBudget["kind"] = "money"; overdrawnBudget["currency"] = "USD"; overdrawnBudget["remaining"] = -900230000;
+                    overdrawnBudget["remainingFraction"] = -.9; overdrawnBudget["status"] = "exceeded";
+                    surface.Update(overdrawn);
+                    const string fullAmount = "$−900.23M";
+                    var amountBounds = surface.VisibleTextBounds.Single(x => x.Text == fullAmount).Bounds;
+                    var sourceBounds = surface.VisibleTextBounds.Single(x => x.Text == "余量").Bounds;
+                    var actualDrawing = ((DrawingVisual)VisualTreeHelper.GetChild(surface, 0)).Drawing;
+                    string drawn = DrawnCharacters(actualDrawing);
+                    Check(drawn.Contains(fullAmount, StringComparison.Ordinal) && drawn.Contains("99+", StringComparison.Ordinal)
+                        && !amountBounds.IntersectsWith(sourceBounds) && CapsuleMorph.FullyContainsRounded(amountBounds, surface.DrawingBounds, surface.CurrentRadius, 0),
+                        "long-negative-budget-and-99-plus-retain-every-digit-and-source-" + light + "-" + dpi);
+                    if (directory != null && dpi == 2)
+                        Save(Bitmap(root, 360, 434, dpi), "monitor-negative-budget-99-plus-" + (light ? "light" : "dark") + ".png");
+                    surface.Update(state);
                     surface.Expansion = 1;
                     state.O("settings").O("floating")["quotaContent"] = "usage";
                     if (directory != null && dpi is 1 or 2)
@@ -261,7 +278,7 @@ internal static class TaskMonitorFloatingTests
                 finally { window.Close(); }
                 foreach (var edge in new[] { CapsuleEdge.Left, CapsuleEdge.Right, CapsuleEdge.Top, CapsuleEdge.Bottom })
                 {
-                    Size size = edge is CapsuleEdge.Left or CapsuleEdge.Right ? new(28, 72) : new(76, 28);
+                    Size size = edge is CapsuleEdge.Left or CapsuleEdge.Right ? new(44, 96) : new(124, 28);
                     var seen = new HashSet<string>();
                     foreach (string status in TaskMonitorGlyph.States)
                     {
@@ -286,11 +303,11 @@ internal static class TaskMonitorFloatingTests
         {
             var sheet = new DrawingVisual(); using (var dc = sheet.RenderOpen())
             {
-                dc.DrawRectangle(light ? Brushes.White : new SolidColorBrush(Color.FromRgb(12, 15, 14)), null, new(0, 0, 784, 284));
+                dc.DrawRectangle(light ? Brushes.White : new SolidColorBrush(Color.FromRgb(12, 15, 14)), null, new(0, 0, 1120, 306));
                 for (int index = 0; index < TaskMonitorGlyph.States.Length; index++)
                 {
                     string status = TaskMonitorGlyph.States[index]; var state = Fixture(light); state.O("monitor").O("summary")["status"] = status;
-                    double left = index * 112;
+                    double left = index * 160;
                     dc.DrawText(new FormattedText(TaskMonitorGlyph.Label(status), CultureInfo.GetCultureInfo("zh-CN"), FlowDirection.LeftToRight, new Typeface("Segoe UI, Microsoft YaHei UI"), 11,
                         light ? Brushes.Black : Brushes.White, 1), new(left + 8, 8));
                     var window = new CapsuleWindow((_, _) => Task.CompletedTask, readPointer: () => null) { ShowActivated = false, Topmost = false };
@@ -299,19 +316,25 @@ internal static class TaskMonitorFloatingTests
                         var surface = window.Surface; window.Content = null; surface.HostSize = new Size(76, 76);
                         surface.CompactBounds = new Rect(0, 0, 76, 76); surface.PanelBounds = new Rect(0, 0, 336, 410); surface.Expansion = 0;
                         surface.Measure(new Size(76, 76)); surface.Arrange(new Rect(0, 0, 76, 76)); surface.Update(state);
-                        dc.DrawImage(Bitmap(surface, 76, 76, 2), new(left + 18, 34, 76, 76));
+                        dc.DrawImage(Bitmap(surface, 76, 76, 2), new(left + 42, 34, 76, 76));
                     }
                     finally { window.Close(); }
-                    foreach (var entry in new[] { (CapsuleEdge.Left, new Rect(left + 19, 122, 28, 72)), (CapsuleEdge.Right, new Rect(left + 65, 122, 28, 72)),
-                        (CapsuleEdge.Top, new Rect(left + 18, 210, 76, 28)), (CapsuleEdge.Bottom, new Rect(left + 18, 248, 76, 28)) })
+                    foreach (var entry in new[] { (CapsuleEdge.Left, new Rect(left + 27, 122, 44, 96)), (CapsuleEdge.Right, new Rect(left + 89, 122, 44, 96)),
+                        (CapsuleEdge.Top, new Rect(left + 18, 224, 124, 28)), (CapsuleEdge.Bottom, new Rect(left + 18, 268, 124, 28)) })
                     {
                         dc.PushTransform(new TranslateTransform(entry.Item2.X, entry.Item2.Y)); CapsuleEdgeIndicator.Draw(dc, entry.Item2.Size, entry.Item1, state, 2); dc.Pop();
                     }
                 }
             }
-            Save(Bitmap(sheet, 784, 284, 2), "monitor-compact-" + (light ? "light" : "dark") + ".png");
+            Save(Bitmap(sheet, 1120, 306, 2), "monitor-compact-" + (light ? "light" : "dark") + ".png");
         }
     }
+    private static string DrawnCharacters(Drawing? drawing) => drawing switch
+    {
+        GlyphRunDrawing glyph when glyph.GlyphRun.Characters is not null => new string(glyph.GlyphRun.Characters.ToArray()),
+        DrawingGroup group => string.Concat(group.Children.Select(DrawnCharacters)),
+        _ => ""
+    };
     private static JsonObject Fixture(bool light)
     {
         var state = DemoData.State(); var floating = state.O("settings").O("floating");

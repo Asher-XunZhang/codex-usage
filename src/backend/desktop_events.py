@@ -1,4 +1,4 @@
-"""Opt-in, bounded macOS stdout events; default HTTP/Windows protocol is unchanged."""
+"""Opt-in, bounded desktop stdout events; default HTTP protocol is unchanged."""
 from __future__ import annotations
 import json
 import os

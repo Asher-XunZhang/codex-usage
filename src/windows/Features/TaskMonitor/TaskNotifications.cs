@@ -51,15 +51,23 @@ internal sealed class TaskNotifications : IDisposable
             int equal = part.IndexOf('='); if (equal < 1) continue;
             values[Uri.UnescapeDataString(part[..equal])] = Uri.UnescapeDataString(part[(equal + 1)..]);
         }
-        if (values.GetValueOrDefault("monitor") != "1") return null;
+        bool budget = values.GetValueOrDefault("budget") == "1";
+        if (!budget && values.GetValueOrDefault("monitor") != "1") return null;
         string operation = values.GetValueOrDefault("op", "view");
-        if (operation is not ("view" or "read")) return null;
+        if (budget ? operation is not ("view" or "pause30" or "pauseCycle") : operation is not ("view" or "read" or "pause30")) return null;
         string[] ids = values.GetValueOrDefault("ids", "").Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Where(x => x.Length <= 160 && x.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or ':' or '.')).Distinct().Take(32).ToArray();
         if (ids.Length == 0) return null;
-        return J.Obj(("action", "monitor-notification"), ("operation", operation), ("ids", ids));
+        return J.Obj(("action", budget ? "budget-notification" : "monitor-notification"), ("operation", operation), ("ids", ids));
     }
     internal static string TagFor(string id) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id)))[..16];
+    internal static JsonObject[] FitBatch(JsonObject[] records, Func<JsonObject[], string> build)
+    {
+        // Windows limits the whole XML payload, including every action argument, to 5 KB.
+        int count = Math.Min(records.Length, 32);
+        while (count > 1 && Encoding.UTF8.GetByteCount(build(records[..count])) > 5000) count--;
+        return records[..count];
+    }
     internal static string BuildXml(JsonObject[] messages, JsonObject settings, bool test = false)
     {
         string ids = string.Join(',', messages.Select(x => x.S("id")));
@@ -81,8 +89,9 @@ internal sealed class TaskNotifications : IDisposable
         if (settings.B("sound")) toast.Element("audio")!.Add(new XAttribute("src", "ms-winsoundevent:Notification.Default"));
         if (!test)
             toast.Add(new XElement("actions",
-                new XElement("action", new XAttribute("content", "查看详情"), new XAttribute("arguments", Args("view")), new XAttribute("activationType", "foreground")),
-                new XElement("action", new XAttribute("content", "标为已读"), new XAttribute("arguments", Args("read")), new XAttribute("activationType", "background"))));
+                new XElement("action", new XAttribute("content", "查看本次消息"), new XAttribute("arguments", Args("view")), new XAttribute("activationType", "foreground")),
+                new XElement("action", new XAttribute("content", "标为已读"), new XAttribute("arguments", Args("read")), new XAttribute("activationType", "background")),
+                new XElement("action", new XAttribute("content", "暂停任务通知 30 分钟"), new XAttribute("arguments", Args("pause30")), new XAttribute("activationType", "background"))));
         return toast.ToString(SaveOptions.DisableFormatting);
     }
     internal JsonObject Status()

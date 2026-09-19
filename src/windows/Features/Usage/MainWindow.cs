@@ -61,7 +61,13 @@ public sealed class MainWindow : Window
     private Task<bool>? usageLoad;
     private Task? preparingClose, completingClose;
     private readonly CancellationTokenSource lifetime = new();
-    private readonly DispatcherTimer pollTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    // Runs only after a connection failure. Normal updates arrive from the host/worker.
+    private readonly DispatcherTimer recoveryTimer = new();
+    private int backendUpdateQueued;
+    private bool pollAgain, hostSubscribed;
+    private long hostRevision = -1;
+    private bool configuring, configurePending;
+    private readonly Dictionary<string, string?> pendingRefreshReplies = new();
     private readonly DispatcherTimer settingsTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private readonly SemaphoreSlim serviceGate = new(1, 1);
     private readonly ContentControl pageContent = new();
@@ -107,8 +113,10 @@ public sealed class MainWindow : Window
         model = settings.S("filterModel", "all"); task = settings.S("filterTask", "all"); group = settings.S("filterGroup") == "task" ? "task" : "model";
         string requestedPage = page ?? settings.S("mainPage", "usage");
         this.page = requestedPage is "budget" or "budgets" ? "budget" : requestedPage == "monitor" ? "monitor" : "usage";
-        pendingBudget = budgetId;
-        pendingMonitor = monitorId; pendingMessage = messageId; pendingMonitorList = monitorList;
+        pendingBudget = string.IsNullOrEmpty(budgetId) ? null : budgetId;
+        pendingMonitor = string.IsNullOrEmpty(monitorId) ? null : monitorId;
+        pendingMessage = string.IsNullOrEmpty(messageId) ? null : messageId;
+        pendingMonitorList = monitorList;
         budget = new BudgetView(SendHost, SetStatus);
         monitor = new TaskMonitorView(SendHost, SetStatus);
         monitor.ViewingChanged += (_, _) => _ = PublishViewing();
@@ -133,21 +141,23 @@ public sealed class MainWindow : Window
         displayMode.Click += (_, _) => ShowDisplayModes(); settingsButton.Click += async (_, _) => await OpenSettings();
         usageTab.Click += (_, _) => SelectPage("usage"); budgetTab.Click += (_, _) => SelectPage("budget"); monitorTab.Click += (_, _) => SelectPage("monitor");
         settingsTimer.Tick += async (_, _) => { settingsTimer.Stop(); await FlushSettings(); };
-        pollTimer.Tick += async (_, _) => await Poll();
+        recoveryTimer.Tick += async (_, _) => { recoveryTimer.Stop(); await Poll(); };
+        client.Updated += QueueBackendUpdate;
         Loaded += async (_, _) =>
         {
             ApplyHost(state); SelectPage(this.page, false);
             if (pendingBudget != null) { budget.Select(pendingBudget); pendingBudget = null; }
             if (pendingMonitorList == "messages") { SelectPage("monitor", false); monitor.SelectMessages(); pendingMonitor = pendingMessage = pendingMonitorList = null; }
+            else if (pendingMonitorList?.StartsWith("notification:", StringComparison.Ordinal) == true) { SelectPage("monitor", false); monitor.SelectNotificationMessages(pendingMonitorList[13..].Split(',', StringSplitOptions.RemoveEmptyEntries)); pendingMonitor = pendingMessage = pendingMonitorList = null; }
             else if (pendingMonitor != null || pendingMessage != null) { SelectPage("monitor", false); monitor.Select(pendingMonitor ?? "", pendingMessage ?? ""); pendingMonitor = pendingMessage = null; }
             if (demo) { Render(state.O("usage")); return; }
-            started = true; pollTimer.Start();
-            await EnsureService(); await LoadUsage();
+            started = true;
+            await Poll();
         };
         Closing += OnClosing;
         Activated += (_, _) => _ = PublishViewing();
         Deactivated += (_, _) => { trend.Dismiss(); _ = PublishViewing(); };
-        StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) trend.Dismiss(); _ = PublishViewing(); };
+        StateChanged += (_, _) => { if (WindowState == WindowState.Minimized) trend.Dismiss(); else QueueBackendUpdate(); _ = PublishViewing(); };
         PreviewKeyDown += OnKey;
         if (!demo) SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
         RestoreFrame(settings.O("mainWindow"));
@@ -360,6 +370,11 @@ public sealed class MainWindow : Window
     }
     private void ApplyHost(JsonObject value)
     {
+        if (value.N("stateRevision") is double revision)
+        {
+            if (revision < hostRevision) return;
+            hostRevision = (long)revision;
+        }
         state = value.Copy(); bool previousApplying = applying; applying = true;
         try
         {
@@ -371,12 +386,12 @@ public sealed class MainWindow : Window
             displayMode.ToolTip = "当前常驻方式：" + (settings.S("mode", "both") switch { "tray" => "仅托盘", "float" => "仅浮窗", _ => "托盘与浮窗" }) + "；切换不会关闭主面板";
             var quota = state.O("quota"); quotaText.Text = quota.S("detail", "账号额度暂不可用"); quotaText.ToolTip = quotaText.Text;
             var quotaUpdate = state.O("updates").O("quota");
-            if (quotaUpdate.B("busy")) quotaText.Text += " · 更新中…";
+            if (!quotaUpdate.B("enabled", true)) quotaText.Text += " · 查询已关闭（上次快照）";
+            else if (quotaUpdate.B("busy")) quotaText.Text += " · 更新中…";
             else if (quotaUpdate.S("error").Length > 0) quotaText.Text += " · 更新失败（可按刷新重试）";
             quotaText.ToolTip = quotaText.Text + (quotaUpdate.S("error").Length > 0 ? "\n" + quotaUpdate.S("error") : "");
             resetCards.Text = quota.S("resetLabel", "重置卡数量未知");
             UpdateAccountSummary();
-            if (state.O("choices").Count > 0) budgetChoices = state.O("choices").Copy();
             UpdateBudget();
             monitor.Update(state);
             int unread = state.O("monitor").O("summary").I("unread");
@@ -386,6 +401,7 @@ public sealed class MainWindow : Window
             if (currentHome.Length > 0 && (nextHome != currentHome || nextCache != currentCache))
             {
                 model = "all"; task = "all"; stamp = ""; publishedStamp = "";
+                budgetChoices = new(); choicesStamp = ""; UpdateBudget();
                 models.SelectedValue = model; tasks.SelectedValue = task; SelectUsageIdentity();
                 SaveFilters(); if (started && !closing) _ = RestartAndLoad();
             }
@@ -397,8 +413,20 @@ public sealed class MainWindow : Window
     }
     private async Task ConfigureInterval()
     {
-        try { await client.Configure(refreshSeconds, lifetime.Token); }
-        catch (Exception e) when (!closed) { SetStatus("刷新间隔同步失败：" + e.Message); }
+        configurePending = true;
+        if (configuring) return;
+        configuring = true;
+        try
+        {
+            while (configurePending && !closed && !closing)
+            {
+                configurePending = false; int seconds = refreshSeconds;
+                await client.Configure(seconds, lifetime.Token);
+                if (seconds != refreshSeconds) configurePending = true;
+            }
+        }
+        catch (Exception e) when (!closed) { configurePending = true; SetStatus("刷新间隔同步失败：" + e.Message); ScheduleRecovery(); }
+        finally { configuring = false; }
     }
     private async Task RestartAndLoad() { await EnsureService(); await LoadUsage(); }
     private async Task EnsureService(bool force = false, bool throwOnError = false)
@@ -418,18 +446,40 @@ public sealed class MainWindow : Window
             finally { serviceGate.Release(); }
         }
         catch (OperationCanceledException) { if (throwOnError) throw; }
-        catch (Exception e) { SetStatus("启动失败 · 点击刷新重试：" + e.Message); refresh.IsEnabled = true; if (throwOnError) throw; }
+        catch (Exception e) { SetStatus("启动失败 · 点击刷新重试：" + e.Message); refresh.IsEnabled = true; ScheduleRecovery(); if (throwOnError) throw; }
+    }
+    private void ScheduleRecovery()
+    {
+        if (closed || closing || demo || lifetime.IsCancellationRequested) return;
+        recoveryTimer.Interval = TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, Math.Min(failures, 5))));
+        recoveryTimer.Start();
+    }
+    private void QueueBackendUpdate()
+    {
+        if (lifetime.IsCancellationRequested || Dispatcher.HasShutdownStarted || Interlocked.Exchange(ref backendUpdateQueued, 1) != 0) return;
+        _ = Dispatcher.BeginInvoke(async () =>
+        {
+            Interlocked.Exchange(ref backendUpdateQueued, 0);
+            if (started && !closing && !closed) await Poll();
+        });
     }
     private async Task Poll()
     {
-        if (polling || closed || demo) return; polling = true;
+        if (closed || closing || demo) return;
+        if (polling) { pollAgain = true; return; } polling = true;
         try
         {
-            await SendHost(J.Obj(("action", "state")));
+            if (!hostSubscribed) { await SendHost(J.Obj(("action", "subscribe-state"), ("pid", Environment.ProcessId))); hostSubscribed = true; }
             if (refreshBusy) return;
             if (!client.Running) await EnsureService();
             if (!client.Running) return;
-            var health = await client.Health(lifetime.Token); failures = 0;
+            var health = client.Snapshot();
+            if (health == null) return;
+            failures = 0; recoveryTimer.Stop();
+            if (configurePending) await ConfigureInterval();
+            foreach (var reply in pendingRefreshReplies.ToArray())
+                if (await NotifyChanged(reply.Key, reply.Value)) pendingRefreshReplies.Remove(reply.Key);
+            await PublishViewing();
             if (!health.B("ready")) { SetStatus("正在索引本机记录…"); return; }
             if (health.S("refresh_error").Length > 0) { usageSession.Invalidate(); UpdateExportEnabled(); SetStatus("本机扫描失败 · 请刷新重试：" + health.S("refresh_error")); return; }
             if (usageSession.ShouldRead(health.S("generated_at")) && page == "usage" && WindowState != WindowState.Minimized) await LoadUsage();
@@ -437,8 +487,8 @@ public sealed class MainWindow : Window
             if (page == "budget" && choicesStamp != health.S("generated_at")) await RefreshBudgetChoices(health.S("generated_at"));
         }
         catch (OperationCanceledException) { }
-        catch (Exception e) { if (!closed) { failures++; SetStatus($"连接恢复中（{failures}）… {e.Message}"); if (failures >= 3) { failures = 0; await EnsureService(force: true); } } }
-        finally { polling = false; }
+        catch (Exception e) { if (!closed && !closing) { failures++; SetStatus($"连接恢复中（{failures}）… {e.Message}"); if (failures == 3 || failures > 3 && !client.Running) await EnsureService(force: true); ScheduleRecovery(); } }
+        finally { polling = false; if (pollAgain) { pollAgain = false; QueueBackendUpdate(); } }
     }
     private Task<bool> LoadUsage()
     {
@@ -475,22 +525,23 @@ public sealed class MainWindow : Window
         catch (OperationCanceledException) { return false; }
         catch (Exception e)
         {
-            if (!closed) SetStatus("当前筛选读取失败 · 将自动重试，也可按刷新重试：" + e.Message);
+            if (!closed) { SetStatus("当前筛选读取失败 · 将自动重试，也可按刷新重试：" + e.Message); ScheduleRecovery(); }
             return false;
         }
         finally { UpdateExportEnabled(); }
     }
-    private async Task NotifyChanged(string? refreshID = null, string? error = null, string? generatedAt = null)
+    private async Task<bool> NotifyChanged(string? refreshID = null, string? error = null, string? generatedAt = null)
     {
-        if (demo || closed) return;
-        if (refreshID == null && error == null && (string.IsNullOrEmpty(generatedAt ?? stamp) || (generatedAt ?? stamp) == publishedStamp)) return;
+        if (demo || closed) return true;
+        if (refreshID == null && error == null && (string.IsNullOrEmpty(generatedAt ?? stamp) || (generatedAt ?? stamp) == publishedStamp)) return true;
         try
         {
             var request = J.Obj(("action", "data-changed"), ("success", error == null), ("error", error ?? ""));
             if (refreshID != null) request["refreshID"] = refreshID;
             await SendHost(request); if (error == null) publishedStamp = generatedAt ?? stamp;
+            return true;
         }
-        catch (Exception e) { SetStatus("后台状态同步失败：" + e.Message); }
+        catch (Exception e) { SetStatus("后台状态同步失败：" + e.Message); ScheduleRecovery(); return false; }
     }
     private void Render(JsonObject data)
     {
@@ -585,9 +636,21 @@ public sealed class MainWindow : Window
     private async Task RefreshBudgetChoices(string generated)
     {
         if (demo || closed || choicesBusy) return; choicesBusy = true;
-        try { await SendHost(J.Obj(("action", "budget-choices"))); choicesStamp = generated; }
-        catch (Exception e) { SetStatus("预算筛选项读取失败：" + e.Message); }
+        string home = state.S("home"), cache = state.S("cache");
+        try
+        {
+            var reply = await SendHost(J.Obj(("action", "budget-choices")));
+            if (!AcceptBudgetChoices(reply, home, cache, generated)) ScheduleRecovery();
+        }
+        catch (Exception e) { SetStatus("预算筛选项读取失败：" + e.Message); ScheduleRecovery(); }
         finally { choicesBusy = false; }
+    }
+    // Query results belong to their data source, independently of newer quota/monitor pushes.
+    internal bool AcceptBudgetChoices(JsonObject reply, string home, string cache, string generated)
+    {
+        if (closed || state.S("home") != home || state.S("cache") != cache || reply.S("home") != home || reply.S("cache") != cache
+            || reply["choices"] is not JsonObject choices) return false;
+        budgetChoices = choices.Copy(); choicesStamp = generated; UpdateBudget(); return true;
     }
     private async Task PublishViewing()
     {
@@ -598,7 +661,7 @@ public sealed class MainWindow : Window
         {
             viewingSignature = signature;
             try { await Ipc.Send(J.Obj(("action", "viewing"), ("budgetID", budget.SelectedId), ("editing", budget.IsEditing), ("active", active), ("pid", Environment.ProcessId)), timeout: 2500); }
-            catch (Exception) { viewingSignature = ""; }
+            catch (Exception) { viewingSignature = ""; ScheduleRecovery(); }
         }
         bool monitorActive = IsActive && WindowState != WindowState.Minimized && page == "monitor" && monitor.IsViewingDetail;
         string next = $"{monitorActive}|{monitor.SelectedId}|{monitor.SelectedMessageId}";
@@ -606,7 +669,7 @@ public sealed class MainWindow : Window
         {
             monitorViewingSignature = next;
             try { await Ipc.Send(J.Obj(("action", "monitor-viewing"), ("taskID", monitor.SelectedId), ("messageID", monitor.SelectedMessageId), ("active", monitorActive), ("pid", Environment.ProcessId)), timeout: 2500); }
-            catch (Exception) { monitorViewingSignature = ""; }
+            catch (Exception) { monitorViewingSignature = ""; ScheduleRecovery(); }
         }
     }
     private async Task ManualRefresh()
@@ -633,19 +696,32 @@ public sealed class MainWindow : Window
         finally
         {
             refreshBusy = false;
-            foreach (string id in refreshIDs.ToArray()) { refreshIDs.Remove(id); await NotifyChanged(id, error); }
+            foreach (string id in refreshIDs.ToArray())
+            {
+                refreshIDs.Remove(id);
+                if (!await NotifyChanged(id, error)) pendingRefreshReplies[id] = error;
+            }
+            QueueBackendUpdate();
             if (!closed) { refresh.IsEnabled = !state.B("busy"); refresh.Content = state.B("busy") ? "刷新中…" : "刷新"; UpdateExportEnabled(); SetStatus(error != null ? "本机更新失败 · 请重试：" + error : $"● 本机 {LocalSnapshotTime} 已更新 · {IntervalDescription}"); }
         }
     }
     public async Task<JsonObject> Handle(JsonObject request)
     {
         if (!Dispatcher.CheckAccess()) return await Dispatcher.InvokeAsync(() => Handle(request)).Task.Unwrap();
+        if (request.S("action") == "host-state")
+        {
+            if (request.I("targetPID") != Environment.ProcessId || request.O("state").I("hostPID") != state.I("hostPID"))
+                throw new InvalidOperationException("主面板状态来源已失效");
+            if (!closing && !closed) ApplyHost(request.O("state"));
+            return J.Obj(("ok", true));
+        }
         switch (request.S("action"))
         {
             case "inspect":
                 return J.Obj(("page", page), ("filters", J.Obj(("days", days), ("model", model), ("task", task), ("group", group))),
                     ("summary", snapshot.O("summary")), ("busy", refreshBusy), ("status", status.Text),
                     ("canExport", export.IsEnabled), ("queryPending", usageSession.NeedsRead), ("settingsPending", settingsQueue.HasPending),
+                    ("hostRevision", hostRevision), ("floatingEdgeMetric", state.O("settings").O("floating").S("edgeMetric", "remaining")),
                     ("frame", J.Obj(("width", ActualWidth), ("height", ActualHeight))), ("monitor", monitor.Inspect()));
             case "focus":
                 if (request.S("monitorList") == "messages" && request["state"] is JsonObject messageState) ApplyHost(messageState);
@@ -657,6 +733,7 @@ public sealed class MainWindow : Window
                 string id = request.S("budgetID", request.S("budgetId")); if (id.Length > 0) { SelectPage("budget"); budget.Select(id, request.B("edit")); }
                 string monitorID = request.S("monitorID", request.S("monitorId")), messageID = request.S("messageID", request.S("messageId"));
                 if (request.S("monitorList") == "messages") { SelectPage("monitor"); monitor.SelectMessages(); }
+                else if (request.S("monitorList").StartsWith("notification:", StringComparison.Ordinal)) { SelectPage("monitor"); monitor.SelectNotificationMessages(request.S("monitorList")[13..].Split(',', StringSplitOptions.RemoveEmptyEntries)); }
                 else if (selected == "monitor" || monitorID.Length > 0 || messageID.Length > 0) { SelectPage("monitor"); monitor.Select(monitorID, messageID); }
                 break;
             case "refresh":
@@ -820,7 +897,7 @@ public sealed class MainWindow : Window
     {
         if (closed) return; closing = true; IsEnabled = false;
         if (!demo) SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;
-        pollTimer.Stop(); settingsTimer.Stop(); trend.Dismiss();
+        recoveryTimer.Stop(); settingsTimer.Stop(); trend.Dismiss();
         try
         {
             if (!demo) await budget.FlushDraft();
@@ -853,7 +930,7 @@ public sealed class MainWindow : Window
     private void ResumeAfterCloseFailure(string message)
     {
         bool wasClosing = closing; closing = false; IsEnabled = true;
-        if (!demo && wasClosing) { SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged; if (started) pollTimer.Start(); }
+        if (!demo && wasClosing) { SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged; hostSubscribed = false; if (started) QueueBackendUpdate(); }
         if (settingsQueue.HasPending) { settingsTimer.Interval = TimeSpan.FromSeconds(5); settingsTimer.Start(); }
         SetStatus(message);
     }

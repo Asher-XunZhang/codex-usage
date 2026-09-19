@@ -87,7 +87,6 @@ internal sealed class Tray : IDisposable
     }
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)] private static extern bool Shell_NotifyIcon(uint message, ref Data data);
     [DllImport("shell32.dll")] private static extern int Shell_NotifyIconGetRect(ref Identifier icon, out NativeRect rectangle);
-    [DllImport("shell32.dll")] private static extern int SHQueryUserNotificationState(out int state);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr icon);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string text);
@@ -110,7 +109,7 @@ internal sealed class Tray : IDisposable
     internal bool IconBoundsResolved { get; private set; }
     internal bool PendingClick => clicks.PendingClick;
     private readonly DispatcherTimer clickTimer = new();
-    public Action? OpenMain, RefreshData, OpenSettings, BalloonShown, BalloonClicked, BalloonFinished;
+    public Action? OpenMain, RefreshData, OpenSettings;
     internal Action<string?>? OpenMonitor;
     internal Action? OpenMonitorSettings;
     internal Func<JsonObject, Task<JsonObject>>? MonitorRequest;
@@ -180,20 +179,6 @@ internal sealed class Tray : IDisposable
         var previous = data.Icon; data.Icon = bitmap.GetHicon(); iconMarker = marker;
         if (previous != IntPtr.Zero) DestroyIcon(previous);
     }
-    public bool Notify(string title, string body)
-    {
-        if (disposed) return false;
-        ClosePreview();
-        if (SHQueryUserNotificationState(out int state) != 0 || state != 5) return false;
-        // A hidden-tray mode can still publish a silent alert and removes this icon afterwards.
-        bool originalDesired = desired;
-        if (!visible) SetVisible(true);
-        desired = originalDesired;
-        data.Flags = 16; data.Title = title.Length > 63 ? title[..63] : title; data.Info = body.Length > 255 ? body[..255] : body; data.InfoFlags = 0x10 | 0x80; data.Version = 10000;
-        bool accepted = Shell_NotifyIcon(1, ref data);
-        if (!accepted && !desired) SetVisible(false);
-        return accepted;
-    }
     public void ShowMenu()
     {
         ClosePreview(); detail?.Dismiss(); clicks.Reset(); clickTimer.Stop();
@@ -248,9 +233,6 @@ internal sealed class Tray : IDisposable
         var click = clicks.Handle(action, visible && desired, Environment.TickCount64);
         if (clicks.PendingClick) { if (!clickTimer.IsEnabled) clickTimer.Start(); } else clickTimer.Stop();
         ApplyClick(click);
-        if (action == 0x402) BalloonShown?.Invoke();
-        else if (action == 0x405) { BalloonClicked?.Invoke(); BalloonFinished?.Invoke(); if (!desired) SetVisible(false); }
-        else if (action is 0x403 or 0x404) { BalloonFinished?.Invoke(); if (!desired) SetVisible(false); }
         return true;
     }
     private void ApplyClick(TrayClickAction click)

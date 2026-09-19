@@ -3,13 +3,14 @@ import errno
 from contextlib import closing
 import os
 import select
+import socket
 import sys
 import threading
 import weakref
 
 
 class _WindowsStopEvent:
-    """One-way stop shared by Python waiters and a native process wait."""
+    """One-way stop shared by Python, native process and socket waiters."""
     def __init__(self, event):
         import ctypes
         from ctypes import wintypes
@@ -33,6 +34,30 @@ class _WindowsStopEvent:
         # At interpreter exit a daemon may still be inside the native wait.
         # Only normal ownership/GC closes here; process teardown belongs to OS.
         self.finalizer.atexit = False
+        self.read_socket = self.write_socket = None
+        self.notified = False
+        try:
+            self.read_socket, self.write_socket = socket.socketpair()
+            self.read_socket.setblocking(False)
+            self.write_socket.setblocking(False)
+            self.socket_finalizer = weakref.finalize(
+                self, self._close_sockets, self.read_socket, self.write_socket)
+            self.socket_finalizer.atexit = False
+            if event.is_set():
+                self.set()
+        except BaseException:
+            self.close()
+            raise
+
+    @staticmethod
+    def _close_sockets(read, write):
+        try:
+            read.close()
+        finally:
+            write.close()
+
+    def fileno(self):
+        return self.read_socket.fileno() if self.read_socket is not None else None
 
     def is_set(self):
         return self.event.is_set()
@@ -44,6 +69,14 @@ class _WindowsStopEvent:
         import ctypes
         with self.lock:
             self.event.set()
+            # Leave this byte unread: every HTTP waiter must observe stop even
+            # after the native parent waiter has already returned.
+            if self.write_socket is not None and not self.notified:
+                try:
+                    self.write_socket.send(b'\0')
+                except BlockingIOError:
+                    pass
+                self.notified = True
             # Request threads may finish after the monitor owner has closed.
             if self.handle and not self.kernel.SetEvent(self.handle):
                 raise ctypes.WinError(ctypes.get_last_error())
@@ -54,6 +87,12 @@ class _WindowsStopEvent:
             if self.handle:
                 self.finalizer()
                 self.handle = None
+            if self.read_socket is not None:
+                if hasattr(self, 'socket_finalizer'):
+                    self.socket_finalizer()
+                else:
+                    self._close_sockets(self.read_socket, self.write_socket)
+                self.read_socket = self.write_socket = None
 
 
 class _MacOSStopEvent:
@@ -115,11 +154,11 @@ class ParentMonitor:
     """Own native cancellation resources and a waiter for one worker lifetime.
 
     Assign monitor.stop before installing signal handlers or starting workers.
-    macOS also needs the pipe without a parent, for signal-driven HTTP shutdown.
+    Native platforms also need readable cancellation without a parent, for HTTP shutdown.
     Other Unix platforms keep the original Event and polling fallback.
     """
     def __init__(self, parent_pid, stop, *, compact=False):
-        self.windows = os.name == 'nt' and parent_pid is not None
+        self.windows = os.name == 'nt'
         self.native = self.windows or sys.platform == 'darwin'
         self.stop = (_WindowsStopEvent(stop) if self.windows else
                      _MacOSStopEvent(stop) if sys.platform == 'darwin' else stop)
@@ -130,11 +169,7 @@ class ParentMonitor:
         self.start_attempted = False
 
     def _run(self):
-        try:
-            self.target(self.parent_pid, self.stop)
-        finally:
-            if self.windows:
-                self.stop.close()
+        self.target(self.parent_pid, self.stop)
 
     def __enter__(self):
         return self
@@ -155,13 +190,11 @@ class ParentMonitor:
             finally:
                 # Never close a handle while WaitForMultipleObjects uses it.
                 # An interrupted start can have created a thread not yet given
-                # an ident. That thread closes its own handle; if creation
-                # failed entirely, finalization reclaims the unborrowed handle.
-                # macOS shares its pipe with the HTTP loop, so the waiter must
-                # not close it. An interrupted start with no ident leaves GC
+                # an ident. Native stop resources also belong to the HTTP
+                # loop, so the parent waiter must not close them. An
+                # interrupted start with no ident leaves GC
                 # ownership until the thread (if created) releases the monitor.
-                if (not self.start_attempted or
-                        (not self.windows and (self.thread is None or joined))):
+                if not self.start_attempted or self.thread is None or joined:
                     self.stop.close()
 
 

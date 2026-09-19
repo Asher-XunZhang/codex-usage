@@ -1,6 +1,6 @@
 # macOS v1.0.3
 
-发布日期：2026-09-18。提供 Apple Silicon（arm64）和 Intel（x86_64）独立安装包。Windows 继续使用 v1.0.2，本次未修改 Windows 界面或共享统计后端。
+发布日期：2026-09-18。提供 Apple Silicon（arm64）和 Intel（x86_64）独立安装包。2026-09-18 macOS 首发时 Windows 为 v1.0.2，该次首发未修改 Windows 界面或共享统计后端。2026-09-19 后续在同一 Release 补充 Windows v1.0.3；既有 macOS 资产、固定摘要和标签保持不变，Windows 来源单独记录。
 
 ## 变化
 

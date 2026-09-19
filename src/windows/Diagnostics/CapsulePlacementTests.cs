@@ -67,8 +67,8 @@ internal static class CapsulePlacementTests
             {
                 var indicator = CapsulePlacement.Indicator(compact, negative, edge, currentDpi);
                 bool vertical = edge is CapsuleEdge.Left or CapsuleEdge.Right;
-                Check(negative.Contains(indicator) && Near(indicator.Width / scale, vertical ? 28 : 76)
-                    && Near(indicator.Height / scale, vertical ? 72 : 28),
+                Check(negative.Contains(indicator) && Near(indicator.Width / scale, vertical ? 44 : 88)
+                    && Near(indicator.Height / scale, vertical ? 68 : 28),
                     "indicator remains inside negative work area at scale " + scale + " edge " + edge);
             }
         }
@@ -79,20 +79,20 @@ internal static class CapsulePlacementTests
             "fractional and unequal DPI axes preserve exact panel DIP dimensions");
 
         var right = new CapsuleMonitor("right", new(1920, 200, 1920, 1080), new(1920, 200, 1920, 1040));
-        Check(Dock(new(1844, 300, 76, 76), monitors: new[] { monitor, right }) == CapsuleEdge.None,
-            "shared right monitor seam is not a docking edge");
+        Check(Dock(new(1844, 300, 76, 76), monitors: new[] { monitor, right }) == CapsuleEdge.Right,
+            "shared right monitor seam remains a docking edge on the selected display");
         Check(Dock(new(1844, 80, 76, 76), monitors: new[] { right, monitor }) == CapsuleEdge.Right,
             "exposed part above a staggered right monitor remains dockable");
-        Check(Dock(new(1844, 162, 76, 76), monitors: new[] { right }) == CapsuleEdge.None,
-            "seam filtering follows the compact center rather than its top edge");
+        Check(Dock(new(1844, 162, 76, 76), monitors: new[] { right }) == CapsuleEdge.Right,
+            "a partial seam accepts the same right edge as an exposed boundary");
         var left = new CapsuleMonitor("left", new(-1920, -300, 1920, 1080), new(-1920, -300, 1920, 1040));
         var top = new CapsuleMonitor("top", new(400, -1080, 1920, 1080), new(400, -1080, 1920, 1040));
         var bottom = new CapsuleMonitor("bottom", new(400, 1080, 1920, 1080), new(400, 1080, 1920, 1040));
         var full = monitor with { Work = monitor.Bounds };
-        Check(Dock(new(0, 300, 76, 76), monitors: new[] { left }) == CapsuleEdge.None
-            && Dock(new(700, 0, 76, 76), monitors: new[] { top }) == CapsuleEdge.None
-            && Dock(new(700, 1004, 76, 76), full, new[] { bottom }) == CapsuleEdge.None,
-            "left top and bottom physical seams are excluded without requiring the current monitor in the list");
+        Check(Dock(new(0, 300, 76, 76), monitors: new[] { left }) == CapsuleEdge.Left
+            && Dock(new(700, 0, 76, 76), monitors: new[] { top }) == CapsuleEdge.Top
+            && Dock(new(700, 1004, 76, 76), full, new[] { bottom }) == CapsuleEdge.Bottom,
+            "left top and bottom physical seams remain dockable");
         Check(Dock(new(700, 964, 76, 76), monitors: new[] { bottom }) == CapsuleEdge.Bottom,
             "bottom taskbar work edge remains dockable before a physical monitor seam");
         var taskbarRight = monitor with { Work = new Rect(0, 0, 1872, 1040) };
@@ -106,16 +106,16 @@ internal static class CapsulePlacementTests
         var lowerRight = new CapsuleMonitor("lower-right", new(1920, 700, 1920, 1080), new(1920, 700, 1920, 1040));
         var upperRight = right with { Bounds = new Rect(1920, 0, 1920, 500) };
         Check(Dock(new(1844, 550, 76, 76), monitors: new[] { lowerRight, upperRight }) == CapsuleEdge.Right
-            && Dock(new(1844, 762, 76, 76), monitors: new[] { upperRight, lowerRight }) == CapsuleEdge.None,
-            "multiple neighboring monitors suppress only their covered seam segments");
+            && Dock(new(1844, 762, 76, 76), monitors: new[] { upperRight, lowerRight }) == CapsuleEdge.Right,
+            "multiple neighboring monitors do not suppress the selected display edge");
         var gap = right with { Bounds = new Rect(1921, 0, 1920, 1080) };
         var diagonal = right with { Bounds = new Rect(1920, 1080, 1920, 1080) };
         Check(Dock(new(1844, 300, 76, 76), monitors: new[] { gap }) == CapsuleEdge.Right
             && Dock(new(1844, 964, 76, 76), monitors: new[] { diagonal }) == CapsuleEdge.Right,
             "a physical pixel gap or diagonal corner contact is not a shared seam");
         var completeLeft = left with { Bounds = new Rect(-1920, 0, 1920, 1080) };
-        Check(Dock(new(0, 0, 76, 76), monitors: new[] { completeLeft }) == CapsuleEdge.Top,
-            "corner docking falls back to the exposed edge after excluding its closer seam");
+        Check(Dock(new(0, 0, 76, 76), monitors: new[] { completeLeft }) == CapsuleEdge.Left,
+            "corner docking preserves the stable edge preference at a shared seam");
 
         Check(Same(CapsulePlacement.CompactAtEdge(new(300, -20, 76, 76), work, CapsuleEdge.Left), new(0, 0, 76, 76))
             && Same(CapsulePlacement.CompactAtEdge(new(300, 1100, 76, 76), work, CapsuleEdge.Right), new(1844, 964, 76, 76)),
@@ -123,14 +123,14 @@ internal static class CapsulePlacementTests
         Check(Same(CapsulePlacement.CompactAtEdge(new(-20, 300, 76, 76), work, CapsuleEdge.Top), new(0, 0, 76, 76))
             && Same(CapsulePlacement.CompactAtEdge(new(2000, 300, 76, 76), work, CapsuleEdge.Bottom), new(1844, 964, 76, 76)),
             "horizontal edge docking is flush and clamps its alignment axis");
-        Check(Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Left, dpi), new(0, 302, 28, 72))
-            && Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Right, dpi), new(1892, 302, 28, 72)),
+        Check(Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Left, dpi), new(0, 304, 44, 68))
+            && Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Right, dpi), new(1876, 304, 44, 68)),
             "vertical indicators retain the compact center along the edge");
-        Check(Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Top, dpi), new(500, 0, 76, 28))
-            && Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Bottom, dpi), new(500, 1012, 76, 28)),
+        Check(Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Top, dpi), new(494, 0, 88, 28))
+            && Same(CapsulePlacement.Indicator(new(500, 300, 76, 76), work, CapsuleEdge.Bottom, dpi), new(494, 1012, 88, 28)),
             "horizontal indicators retain the compact center along the edge");
-        Check(Same(CapsulePlacement.Indicator(new(1844, 1100, 76, 76), work, CapsuleEdge.Right, dpi), new(1892, 968, 28, 72))
-            && Same(CapsulePlacement.Indicator(new(-100, 100, 76, 76), work, CapsuleEdge.Top, dpi), new(0, 0, 76, 28)),
+        Check(Same(CapsulePlacement.Indicator(new(1844, 1100, 76, 76), work, CapsuleEdge.Right, dpi), new(1876, 972, 44, 68))
+            && Same(CapsulePlacement.Indicator(new(-100, 100, 76, 76), work, CapsuleEdge.Top, dpi), new(0, 0, 88, 28)),
             "indicator alignment clamps at both ends of the work area");
         foreach (var edge in new[] { CapsuleEdge.None, (CapsuleEdge)99 })
         {

@@ -124,7 +124,7 @@ internal sealed partial class CapsuleWindow : Window
                 // Reserve a nearby tab even while autohide is disabled, so enabling
                 // it later does not resize the HWND merely to show the indicator.
                 var edge = DockEdge != CapsuleEdge.None ? DockEdge : CapsulePlacement.Dock(compact, monitor, Monitors(), dpi);
-                var tab = CapsulePlacement.Indicator(compact, monitor.Work, edge, dpi);
+                var tab = CapsulePlacement.Indicator(compact, monitor.Work, edge, dpi, showsMonitor: true);
                 if (!tab.IsEmpty) envelope.Union(tab);
                 envelope = PixelEnvelope(envelope);
                 Surface.CompactBounds = LocalBounds(compact, envelope, dpi);
@@ -222,6 +222,9 @@ internal sealed partial class CapsuleWindow : Window
     private bool ContainsPointer(Rect bounds, double expansion, Point point)
     {
         var dpi = VisualTreeHelper.GetDpi(this);
+        if (Surface.Edge != CapsuleEdge.None && bounds == VisualPixelBounds)
+            return CapsuleEdgeIndicator.Shape(new(bounds.Width / dpi.DpiScaleX, bounds.Height / dpi.DpiScaleY), Surface.Edge, Surface.Docking)
+                .FillContains(new Point((point.X - bounds.X) / dpi.DpiScaleX, (point.Y - bounds.Y) / dpi.DpiScaleY));
         double geometryProgress = expansion > 0 && expansion < 1 ? (38 - Surface.CurrentRadius) / 16 : expansion;
         return CapsuleGeometry.Contains(new((point.X - bounds.X) / dpi.DpiScaleX, (point.Y - bounds.Y) / dpi.DpiScaleY),
             new(bounds.Width / dpi.DpiScaleX, bounds.Height / dpi.DpiScaleY), geometryProgress);
@@ -331,6 +334,7 @@ internal sealed partial class CapsuleWindow : Window
         Surface.Update(state);
         if (floating.ContainsKey("keepExpanded")) SetKeepsExpanded(floating.B("keepExpanded"));
         UpdateDockSettings(floating);
+        RefreshEdgeSize();
     }
     internal bool IsMonitorTaskVisible(string taskID) => IsVisible && !HiddenAtEdge && !edgeAnimating && animation is null &&
         Surface.Edge == CapsuleEdge.None && Surface.Expansion >= .999 && Surface.MonitorMode &&
@@ -570,6 +574,7 @@ internal sealed partial class CapsuleWindow : Window
             string mode = Surface.State.O("settings").S("mode", "both");
             Add("仅托盘", "mode", "tray", mode == "tray"); Add("仅浮窗", "mode", "float", mode == "float"); Add("托盘与浮窗", "mode", "both", mode == "both");
             Section("外观与设置");
+            Add("弧线配色…", "arcColors");
             Add("外观与统一设置…", "settings-dialog", "appearance"); Add("数据与更新设置…", "settings-dialog", "updates"); Add("数据更新状态与重试…", "updateStatus");
             context.Items.Add(new Separator()); Add("隐藏浮窗至托盘", "hide-floating");
             context.Items.Add(new Separator()); Add("退出 Codex 用量", "quit");

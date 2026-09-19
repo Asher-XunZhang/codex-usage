@@ -70,7 +70,7 @@ internal static class CapsuleEdgeIndicatorTests
         {
             var size = SizeFor(edge); var shape = CapsuleEdgeIndicator.Shape(size, edge);
             var outer = OuterCorner(edge, size); var inner = InnerCorner(edge, size);
-            Check(shape.FillContains(outer) && !shape.FillContains(inner) && shape.FillContains(new Point(size.Width / 2, size.Height / 2)), edge + " shape has a flat screen edge and only inward rounded corners");
+            Check(shape.FillContains(outer) && !shape.FillContains(inner) && shape.FillContains(new Point(size.Width / 2, size.Height / 2)), edge + " shape has a flat screen edge and a curved crest with transparent outer corners");
         }
         Check(CapsuleEdgeIndicator.Shape(new(28, 72), CapsuleEdge.None).IsEmpty(), "undocked has no edge hit target");
 
@@ -91,7 +91,7 @@ internal static class CapsuleEdgeIndicatorTests
                             return pixels[(y * bitmap.PixelWidth + x) * 4 + 3];
                         }
                         int centerAlpha = Alpha(new(size.Width / 2, size.Height / 2)), outerAlpha = Alpha(OuterCorner(edge, size)), innerAlpha = Alpha(InnerCorner(edge, size));
-                        Point backgroundPoint = edge is CapsuleEdge.Left or CapsuleEdge.Right ? new(size.Width / 2, size.Height - 5) : new(3, size.Height / 2);
+                        Point backgroundPoint = edge switch { CapsuleEdge.Left => new(3, size.Height / 2), CapsuleEdge.Right => new(size.Width - 3, size.Height / 2), CapsuleEdge.Top => new(size.Width / 2, 3), _ => new(size.Width / 2, size.Height - 3) };
                         int backgroundAlpha = Alpha(backgroundPoint);
                         // WPF's antialiased glyph compositing can round an opaque text pixel to 254.
                         // A separate text-free background sample must remain fully opaque.
@@ -111,7 +111,7 @@ internal static class CapsuleEdgeIndicatorTests
         }
         var fresh = Pixels(state); state.O("quota")["stale"] = true; var stale = Pixels(state);
         int changedPixels = Enumerable.Range(0, fresh.Length / 4).Count(i => Enumerable.Range(0, 4).Any(c => fresh[i * 4 + c] != stale[i * 4 + c]));
-        Check(changedPixels > 0 && changedPixels < 30, "stale status changes only a small independent marker, not the numeric label or its bounds");
+        Check(changedPixels > 0 && changedPixels < 400, "stale quota adds a visible asterisk without changing the numeric value");
         return J.Obj(("success", true), ("checks", checks), ("renders", renders));
     }
 
@@ -132,12 +132,13 @@ internal static class CapsuleEdgeIndicatorTests
     }
 
     private static readonly CapsuleEdge[] Edges = [CapsuleEdge.Left, CapsuleEdge.Right, CapsuleEdge.Top, CapsuleEdge.Bottom];
-    private static Size SizeFor(CapsuleEdge edge) => edge is CapsuleEdge.Left or CapsuleEdge.Right ? new(28, 72) : new(76, 28);
+    private static Size SizeFor(CapsuleEdge edge) => edge is CapsuleEdge.Left or CapsuleEdge.Right ? new(44, 68) : new(88, 28);
     private static Point OuterCorner(CapsuleEdge edge, Size size) => edge switch
     {
-        CapsuleEdge.Right => new(size.Width - .25, .25),
-        CapsuleEdge.Bottom => new(.25, size.Height - .25),
-        _ => new(.25, .25)
+        CapsuleEdge.Left => new(.5, size.Height / 2),
+        CapsuleEdge.Right => new(size.Width - .5, size.Height / 2),
+        CapsuleEdge.Top => new(size.Width / 2, .5),
+        _ => new(size.Width / 2, size.Height - .5)
     };
     private static Point InnerCorner(CapsuleEdge edge, Size size) => edge switch
     {

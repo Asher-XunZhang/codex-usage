@@ -144,6 +144,7 @@ internal sealed class SettingsWindow : Window
         Heading("常驻显示方式", "只改变常驻入口，已打开的主面板继续保留。隐藏浮窗后仍可从托盘找回。");
         Picker("显示方式", [new("tray", "仅系统托盘"), new("float", "仅悬浮窗"), new("both", "托盘与悬浮窗")], state => state.O("settings").S("mode", "both"), value => Queue("mode", J.Obj(("action", "mode"), ("value", value))));
         Divider(); Heading("悬浮窗行为");
+        body.Children.Add(Command("弧线配色…", () => send(J.Obj(("action", "arcColors")))));
         Toggle("保持展开：鼠标离开后保留详情", "keepExpanded", false);
         Toggle("始终置顶：显示在其他窗口上方", "pinned", true);
         Toggle("贴边自动隐藏", "edgeAutoHide", true);
@@ -173,6 +174,16 @@ internal sealed class SettingsWindow : Window
             if (seconds != null) Queue("refresh", J.Obj(("action", "settings"), ("patch", J.Obj(("refresh", seconds.Value)))));
         });
         Divider(); Heading("账号额度", "通过本机已登录的 Codex 读取，约每 60 秒更新，与本地自动更新开关独立。");
+        var quotaSwitch = new CheckBox { Content = "读取账号额度", Margin = new Thickness(0, 9, 0, 9) };
+        void UpdateQuotaSwitch(JsonObject state)
+        {
+            bool locked = state.O("updates").O("quota").B("locked");
+            quotaSwitch.IsChecked = !locked && state.O("settings").B("quotaEnabled", true);
+            quotaSwitch.IsEnabled = !locked;
+            quotaSwitch.ToolTip = locked ? "本次启动使用了 --no-quota；重新正常启动后可修改。" : "关闭后停止后续查询，保留上次账号快照；本地统计继续更新。";
+        }
+        UpdateQuotaSwitch(read()); sync.Add(UpdateQuotaSwitch); body.Children.Add(quotaSwitch);
+        quotaSwitch.Click += (_, _) => Queue("quotaEnabled", J.Obj(("action", "settings"), ("patch", J.Obj(("quotaEnabled", quotaSwitch.IsChecked == true)))));
         quotaStatus = Readout(); body.Children.Add(quotaStatus); quotaRetry = Command("重试账号额度", () => send(J.Obj(("action", "refresh-quota")))); body.Children.Add(quotaRetry);
         body.Children.Add(Text("若读取失败，请确认本机 Codex 已安装并已登录，再重试。失败时保留上次成功记录并标明时间。"));
     }

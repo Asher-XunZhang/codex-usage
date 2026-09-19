@@ -3,6 +3,7 @@ from tools.common.paths import ROOT, BACKEND, macos_source
 import ctypes
 import gc
 import os
+import select
 from pathlib import Path
 import subprocess
 import sys
@@ -42,7 +43,54 @@ class WindowsParentWatchTests(unittest.TestCase):
                     self.assertTrue(monitor.stop.event.wait(1))
                     monitor.thread.join(2)
                     self.assertFalse(monitor.thread.is_alive())
-                self.assertIsNone(monitor.stop.handle)
+                # Parent thread exit must not close HTTP cancellation early.
+                self.assertIsNotNone(monitor.stop.handle)
+                for _ in range(2):
+                    self.assertEqual(select.select([monitor.stop], [], [], 0)[0], [monitor.stop])
+            self.assertIsNone(monitor.stop.handle)
+            self.assertIsNone(monitor.stop.fileno())
+
+    def test_http_waits_for_request_or_stop_without_parent_or_idle_timeout(self):
+        import dashboard_server
+        from dashboard_data import UsageIndex
+        from urllib.request import build_opener, ProxyHandler
+        original = dashboard_server.selectors.DefaultSelector
+        calls = []
+        entered = threading.Event()
+
+        class Selector(original):
+            def select(self, timeout=None):
+                calls.append(timeout)
+                entered.set()
+                return super().select(timeout)
+
+        with tempfile.TemporaryDirectory() as directory:
+            index = UsageIndex(Path(directory), refresh_seconds=0)
+            with ParentMonitor(None, index.stop) as monitor:
+                index.stop = monitor.stop
+                self.assertIsNone(monitor.thread)
+                with dashboard_server.LocalHTTPServer(('127.0.0.1', 0), dashboard_server.make_handler(index)) as server, patch.object(dashboard_server.selectors, 'DefaultSelector', Selector):
+                    worker = threading.Thread(target=server.serve_until_stopped, args=(index.stop,), daemon=True)
+                    worker.start()
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        self.assertFalse(index.stop.wait(.35))
+                        self.assertEqual(calls, [None])
+                        with build_opener(ProxyHandler({})).open(f'http://127.0.0.1:{server.server_port}/health', timeout=2) as response:
+                            self.assertEqual(response.status, 200)
+                        self.assertTrue(all(timeout is None for timeout in calls))
+                    finally:
+                        index.stop.set()
+                        worker.join(2)
+                        self.assertFalse(worker.is_alive())
+            self.assertIsNone(monitor.stop.fileno())
+
+    def test_socket_creation_failure_releases_native_event(self):
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        with patch('parent_watch.socket.socketpair', side_effect=OSError('synthetic socket')), patch('ctypes.WinDLL', return_value=kernel), patch.object(kernel, 'CloseHandle', wraps=kernel.CloseHandle) as close:
+            with self.assertRaisesRegex(OSError, 'synthetic socket'):
+                self.monitor()
+            close.assert_called_once()
 
     def test_stop_before_start_keeps_initial_event_and_finishes(self):
         stop = threading.Event()

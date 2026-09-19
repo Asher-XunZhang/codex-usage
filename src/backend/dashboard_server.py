@@ -245,8 +245,8 @@ class LocalHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def serve_until_stopped(self, stop):
-        if sys.platform == 'darwin':
-            # ParentMonitor owns the stop pipe until this loop has returned.
+        if sys.platform == 'darwin' or os.name == 'nt':
+            # ParentMonitor owns the stop pipe/socket until this loop returns.
             # Signal handlers set the same event; a restarted select is still
             # woken by the readable pipe (PEP 475), without an idle timeout.
             with selectors.DefaultSelector() as selector:
@@ -288,12 +288,12 @@ def main():
     parser.add_argument("--parent-pid", type=int, help="Exit when this direct parent exits (desktop app)")
     parser.add_argument("--refresh-seconds", type=int, default=30, help="Seconds between scans; 0 disables automatic scans")
     parser.add_argument("--cache-path", type=Path, help="Private persistent SQLite index for the native desktop app")
-    parser.add_argument("--desktop-events", action="store_true", help="macOS only: bounded lifecycle/state JSON on stdout")
+    parser.add_argument("--desktop-events", action="store_true", help="bounded desktop lifecycle/state JSON on stdout")
     args = parser.parse_args()
     if args.parent_pid is not None and (args.parent_pid <= 1 or args.supervise or (os.name == 'nt' and os.getppid() != args.parent_pid)):
         parser.error("--parent-pid requires a live direct parent and cannot be combined with --supervise")
-    if args.desktop_events and (sys.platform != 'darwin' or args.supervise or args.log_file):
-        parser.error("--desktop-events requires macOS direct launch without --log-file")
+    if args.desktop_events and (sys.platform not in ('darwin', 'win32') or args.supervise or args.log_file):
+        parser.error("--desktop-events requires macOS/Windows direct launch without --log-file")
     event_output = sys.stdout
     if args.desktop_events:
         sys.stdout = sys.stderr

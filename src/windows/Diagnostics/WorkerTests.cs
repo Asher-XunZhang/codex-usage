@@ -14,11 +14,14 @@ internal static class WorkerTests
 {
     public static async Task RunAsync()
     {
+        await BackendEventTests.RunAsync();
         string parentDirectory = Path.GetFullPath(Path.GetTempPath());
         string directory = Path.Combine(parentDirectory, "CodexUsage-WorkerTests-" + Guid.NewGuid().ToString("N"));
         string previousBase = Paths.Base;
         string? previousProxy = Environment.GetEnvironmentVariable("HTTP_PROXY");
         var client = new DashboardClient();
+        int updates = 0;
+        client.Updated += () => Interlocked.Increment(ref updates);
         void Check(bool condition, string description) { if (!condition) throw new InvalidOperationException("Worker test: " + description); }
         bool Alive(int pid) { try { using var process = Process.GetProcessById(pid); return !process.HasExited; } catch (ArgumentException) { return false; } }
         int finalPid = 0;
@@ -49,7 +52,12 @@ internal static class WorkerTests
             await client.Start(home, Paths.Cache(home), 0, deadline.Token);
             Check((await client.Health(deadline.Token)).I("pid") == firstPid, "repeated start retains one worker");
             await File.AppendAllTextAsync(log, J.Text(Record("r2", Counts(200, 40))) + "\n");
+            // Let the completed refresh callback leave the reader before
+            // measuring a quiet interval; no periodic events should follow.
+            await Task.Delay(100, deadline.Token);
+            int quietUpdates = Volatile.Read(ref updates);
             await Task.Delay(1250, deadline.Token);
+            Check(Volatile.Read(ref updates) == quietUpdates, "idle event channel has no periodic callbacks");
             Check((await client.Usage(query, deadline.Token)).O("summary").N("total_tokens") == 120, "refresh disabled does not scan appended logs");
             await client.Refresh(deadline.Token);
             snapshot = await client.Usage(DashboardClient.Query("all", "test-model", "root", "task"), deadline.Token);
@@ -63,6 +71,23 @@ internal static class WorkerTests
             finalPid = (await client.Health(deadline.Token)).I("pid");
             Check(finalPid != firstPid && !Alive(firstPid), "recovery terminates the previous worker");
             Check((await client.Usage(query, deadline.Token)).O("summary").N("total_tokens") == 240, "recovery preserves the persistent index");
+            var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveExit() { try { _ = client.Snapshot(); } catch (IOException) { disconnected.TrySetResult(); } }
+            client.Updated += ObserveExit;
+            int crashedPid = finalPid;
+            using (var crashed = Process.GetProcessById(crashedPid))
+            {
+                crashed.Kill();
+                await crashed.WaitForExitAsync(deadline.Token);
+            }
+            await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            client.Updated -= ObserveExit;
+            Check(!client.Running, "real worker crash signals disconnection");
+            await client.Start(home, Paths.Cache(home), 0, deadline.Token);
+            await client.Refresh(deadline.Token);
+            finalPid = (await client.Health(deadline.Token)).I("pid");
+            Check(finalPid != crashedPid && !Alive(crashedPid), "start recovers crashed worker without forced restart");
+            Check((await client.Usage(query, deadline.Token)).O("summary").N("total_tokens") == 240, "crash recovery retains indexed data");
             using var finalWorker = Process.GetProcessById(finalPid);
             _ = finalWorker.Handle; // Retain the real exit status after DashboardClient releases its handle.
             await client.DisposeAsync();

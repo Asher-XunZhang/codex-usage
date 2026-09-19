@@ -235,6 +235,21 @@ internal static class BudgetTests
                 Check(Evaluate(store, data, time).Count == 0, "maximum thresholds deduplication");
             }
             Check(J.Read(Path.Combine(directory, "bounded.json")).A("ledger").Count == 1000, "bounded two-period ledger");
+
+            // Toast actions bind to stored events and apply all pauses in one durable operation.
+            store = Create(); request = Request(store); alerts = Evaluate(store, Usage(request, 95));
+            var notificationIDs = new JsonArray(alerts.Rows().Select(x => (JsonNode?)JsonValue.Create(TaskNotifications.TagFor(x.S("id")))).ToArray());
+            store.Apply("acknowledge", J.Obj(("ids", alerts.Rows().Select(x => x.S("id")).ToArray())), Source, Now);
+            Check(store.NotificationAlerts(notificationIDs).Length == 1, "submitted notification identity resolves even after delivery acknowledgment");
+            store.Apply("pause-notification", J.Obj(("ids", notificationIDs), ("mode", "duration")), Source, Now);
+            Evaluate(store); Check(Summary(store).B("paused") && Summary(store).N("pausedUntil") == Now + 1800, "notification duration action pauses thirty minutes");
+            store.Apply("pause-notification", J.Obj(("ids", notificationIDs), ("mode", "cycle")), Source, Now);
+            Evaluate(store); Check(Summary(store).N("pausedUntil") == Summary(store).N("periodEnd"), "notification cycle action pauses until associated period end");
+            store = new BudgetStore(Path.Combine(directory, count + ".json")); Evaluate(store);
+            Check(Summary(store).B("paused"), "notification pause survives reload");
+            Reject(() => store.Apply("pause-notification", J.Obj(("ids", notificationIDs), ("mode", "cycle")), Source, Now + 86400), "stale notification cannot pause next cycle");
+            Evaluate(store, now: Now + 86400); Check(!Summary(store).B("paused"), "old cycle rejection preserves next cycle reminders");
+            Reject(() => store.Apply("pause-notification", J.Obj(("ids", new JsonArray("missing"))), Source, Now), "unknown notification identity never changes budget reminders");
         }
         finally
         {

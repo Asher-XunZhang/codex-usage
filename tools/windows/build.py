@@ -15,7 +15,7 @@ from tools.common.downloads import digest_file, fetch_runtime
 from tools.windows.fetch_runtime import extract_runtime, load_manifest
 
 SDK_VERSION = '10.0.401'
-BACKEND_FILES = ('compact_snapshot.py', 'dashboard_data.py', 'dashboard_server.py',
+BACKEND_FILES = ('compact_snapshot.py', 'dashboard_data.py', 'dashboard_server.py', 'desktop_events.py',
                  'disk_index.py', 'parent_watch.py', 'token_usage.py', 'windows_job.py')
 SDK_NOTICES = (
     ('WINDOWS-SDK-LICENSE.rtf', 'dd07eb178e00c6bba4148457fc00ff77cd4887eb521d504186fe59c9ec8bbe62'),

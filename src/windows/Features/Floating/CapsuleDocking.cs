@@ -13,12 +13,13 @@ namespace CodexUsage;
 internal sealed partial class CapsuleWindow
 {
     internal CapsuleEdge DockEdge { get; private set; }
-    internal bool HiddenAtEdge => Surface.Edge != CapsuleEdge.None;
+    internal bool HiddenAtEdge => Surface.Edge != CapsuleEdge.None && Surface.Docking >= .999999;
     internal bool DockMotionActive => edgeAnimating;
     internal bool AwaitingRingEntry => awaitingRingEntry;
     internal Rect CompactPixelBounds => InitialCompactBounds();
     internal bool DockTimersActive => dockWatch.IsEnabled || hideDelay.IsEnabled || wakeDelay.IsEnabled;
-    private bool autoHide = true, edgeAnimating, awaitingRingEntry;
+    private bool autoHide = true, edgeAnimating, edgeResizing, awaitingRingEntry;
+    private Rect? edgeSizeTarget;
     private Point? revealedPointer;
     private JsonObject restoredDock = new();
     private readonly DispatcherTimer hideDelay = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(550) };
@@ -120,7 +121,7 @@ internal sealed partial class CapsuleWindow
         if (DockEdge != CapsuleEdge.None)
         {
             compact = CapsulePlacement.CompactAtEdge(compact, monitor.Work, DockEdge);
-            // A newly attached display may turn yesterday's outer edge into a seam.
+            // Revalidate against the current work area after a display change.
             DockEdge = CapsulePlacement.Dock(compact, monitor, Monitors(), dpi);
         }
         compactBounds = compact; RebuildEnvelope(); SetCompact();
@@ -178,6 +179,7 @@ internal sealed partial class CapsuleWindow
     }
     private void SetCompact()
     {
+        edgeResizing = false; edgeSizeTarget = null;
         Surface.Edge = CapsuleEdge.None; Surface.DockClip = null; Surface.AnimationBounds = null;
         Surface.Expansion = 0; expanded = false; hotspot = null; pointerTracking = false; pointerRetention = null;
         Surface.Redraw();
@@ -203,7 +205,9 @@ internal sealed partial class CapsuleWindow
         StopAnimation(); edgeAnimating = false; var dpi = VisualTreeHelper.GetDpi(this);
         var compact = InitialCompactBounds();
         var bounds = new Rect(compact.TopLeft, new Size(76 * dpi.DpiScaleX, 76 * dpi.DpiScaleY));
-        var monitor = MonitorAt(bounds); bounds = CapsuleGeometry.Clamp(bounds, monitor.Work);
+        // On a connected seam the release pointer chooses the owning display.
+        var monitor = readPointer() is Point pointer ? MonitorAt(new Rect(pointer, new Size(1, 1))) : MonitorAt(bounds);
+        bounds = CapsuleGeometry.Clamp(bounds, monitor.Work);
         DockEdge = autoHide ? CapsulePlacement.Dock(bounds, monitor, Monitors(), dpi) : CapsuleEdge.None;
         compactBounds = CapsulePlacement.CompactAtEdge(bounds, monitor.Work, DockEdge); RebuildEnvelope(); SetCompact();
         pressed = false; awaitingRingEntry = true; revealedPointer = readPointer(); dismissedPointer = revealedPointer;
@@ -220,11 +224,11 @@ internal sealed partial class CapsuleWindow
         hideDelay.Stop(); wakeDelay.Stop();
         var compact = InitialCompactBounds(); var dpi = VisualTreeHelper.GetDpi(this);
         var monitor = MonitorAt(compact);
-        Rect? initial = edgeAnimating ? VisualPixelBounds : null;
-        StopAnimation(); edgeAnimating = false; Surface.Edge = CapsuleEdge.None;
+        Rect? initial = VisualPixelBounds; double startDocking = Surface.Edge != CapsuleEdge.None ? Surface.Docking : 0;
+        StopAnimation(); edgeAnimating = edgeResizing = false; edgeSizeTarget = null; Surface.Edge = CapsuleEdge.None;
         awaitingRingEntry = requireEntry; revealedPointer = readPointer(); dismissedPointer = revealedPointer;
         if (!animate || !IsVisible || !SystemParameters.ClientAreaAnimation) { SetCompact(); StartDockWatch(); return; }
-        AnimateEdge(false, compact, monitor.Work, dpi, initial);
+        AnimateEdge(false, compact, monitor.Work, dpi, initial, startDocking);
     }
     private void HideToEdge()
     {
@@ -233,30 +237,58 @@ internal sealed partial class CapsuleWindow
         var compact = InitialCompactBounds(); var dpi = VisualTreeHelper.GetDpi(this);
         AnimateEdge(true, compact, MonitorAt(compact).Work, dpi);
     }
-    private void AnimateEdge(bool hide, Rect compact, Rect work, DpiScale dpi, Rect? initial = null)
+    private void RefreshEdgeSize()
     {
-        var tab = CapsulePlacement.Indicator(compact, work, DockEdge, dpi);
+        if (!HiddenAtEdge || edgeAnimating && !edgeResizing || pressed || closed) return;
+        var compact = InitialCompactBounds(); var dpi = VisualTreeHelper.GetDpi(this);
+        var target = CapsulePlacement.Indicator(compact, MonitorAt(compact).Work, DockEdge, dpi, CapsuleMonitorBadge.ShowsDockedMonitor(Surface.State));
+        if (target.IsEmpty) return;
+        var local = LocalBounds(target, PixelBounds, dpi);
+        if (edgeResizing && edgeSizeTarget == local) return;
+        var start = Surface.AnimationBounds ?? local;
+        if (edgeResizing) StopAnimation();
+        edgeResizing = false; edgeSizeTarget = null; edgeAnimating = false;
+        if (start == local) return;
+        void Done()
+        {
+            StopAnimation(); edgeAnimating = edgeResizing = false; edgeSizeTarget = null;
+            Surface.AnimationBounds = local; Surface.WindowStateChanged();
+            RefreshEdgeSize(); StartDockWatch();
+        }
+        if (!IsVisible || !SystemParameters.ClientAreaAnimation) { Done(); return; }
+        hideDelay.Stop(); wakeDelay.Stop();
+        edgeResizing = edgeAnimating = true; edgeSizeTarget = local;
+        var watch = Stopwatch.StartNew(); TimeSpan previous = TimeSpan.MinValue;
+        animation = (_, args) =>
+        {
+            if (args is not RenderingEventArgs frame || frame.RenderingTime == previous) return;
+            previous = frame.RenderingTime;
+            double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / 160, 0, 1), t = 1 - Math.Pow(1 - progress, 3);
+            Surface.AnimationBounds = new Rect(start.X + (local.X - start.X) * t, start.Y + (local.Y - start.Y) * t,
+                start.Width + (local.Width - start.Width) * t, start.Height + (local.Height - start.Height) * t);
+            Surface.Redraw(); if (progress >= 1) Done();
+        };
+        CompositionTarget.Rendering += animation;
+    }
+    private void AnimateEdge(bool hide, Rect compact, Rect work, DpiScale dpi, Rect? initial = null, double? initialDocking = null)
+    {
+        var tab = CapsulePlacement.Indicator(compact, work, DockEdge, dpi, CapsuleMonitorBadge.ShowsDockedMonitor(Surface.State));
         if (tab.IsEmpty) { SetCompact(); return; }
         var host = PixelBounds;
         Rect Local(Rect r) => LocalBounds(r, host, dpi);
-        var offscreen = compact;
-        switch (DockEdge)
-        {
-            case CapsuleEdge.Left: offscreen.X = work.Left - compact.Width; break;
-            case CapsuleEdge.Right: offscreen.X = work.Right; break;
-            case CapsuleEdge.Top: offscreen.Y = work.Top - compact.Height; break;
-            case CapsuleEdge.Bottom: offscreen.Y = work.Bottom; break;
-        }
         void Done()
         {
             StopAnimation(); edgeAnimating = false;
-            if (hide) { Surface.Edge = DockEdge; Surface.DockClip = Local(work); Surface.AnimationBounds = Local(tab); Surface.Redraw(); }
+            if (hide) { Surface.Docking = 1; Surface.Edge = DockEdge; Surface.DockClip = Local(work); Surface.AnimationBounds = Local(tab); Surface.Redraw(); }
             else { SetCompact(); revealedPointer = readPointer(); }
-            StartDockWatch();
+            RefreshEdgeSize(); StartDockWatch();
         }
         if (!SystemParameters.ClientAreaAnimation) { Done(); return; }
-        edgeAnimating = true; Surface.Edge = CapsuleEdge.None; Surface.Expansion = 0;
-        var start = initial ?? (hide ? compact : offscreen); var end = hide ? offscreen : compact;
+        edgeResizing = false; edgeSizeTarget = null;
+        edgeAnimating = true; Surface.Edge = DockEdge; Surface.Expansion = 0;
+        double fromDocking = initialDocking ?? (hide ? 0 : 1), toDocking = hide ? 1 : 0;
+        Surface.Docking = fromDocking;
+        var start = initial ?? (hide ? compact : tab); var end = hide ? tab : compact;
         Surface.DockClip = Local(work); Surface.AnimationBounds = Local(start); Surface.Redraw();
         var watch = Stopwatch.StartNew(); TimeSpan previous = TimeSpan.MinValue;
         animation = (_, args) =>
@@ -267,7 +299,9 @@ internal sealed partial class CapsuleWindow
             if (hide && PointerNearCompact()) { RevealEdge(); return; }
             double progress = Math.Clamp(watch.Elapsed.TotalMilliseconds / (hide ? 220 : 160), 0, 1);
             double t = 1 - Math.Pow(1 - progress, 3);
-            Surface.AnimationBounds = Local(new(start.X + (end.X - start.X) * t, start.Y + (end.Y - start.Y) * t, compact.Width, compact.Height));
+            Surface.Docking = fromDocking + (toDocking - fromDocking) * t;
+            Surface.AnimationBounds = Local(new(start.X + (end.X - start.X) * t, start.Y + (end.Y - start.Y) * t,
+                start.Width + (end.Width - start.Width) * t, start.Height + (end.Height - start.Height) * t));
             Surface.Redraw(); if (progress >= 1) Done();
         };
         CompositionTarget.Rendering += animation;

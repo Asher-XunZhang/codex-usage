@@ -24,8 +24,11 @@ internal sealed class Host : IDisposable
     private readonly CancellationTokenSource stop = new();
     private readonly bool demo;
     private readonly bool noQuota;
+    private bool QuotaEnabled => !noQuota && settings.Data.B("quotaEnabled", true);
+    private long quotaRevision;
     private CapsuleWindow? capsule;
     private SettingsWindow? preferences;
+    private ArcColorEditor? arcColors;
     private TaskMonitorSettingsWindow? monitorPreferences;
     private Process? main;
     private FileSystemWatcher? watcher;
@@ -41,13 +44,17 @@ internal sealed class Host : IDisposable
     private double lastScan, lastRead, lastReconcile, lastQuota, refreshStarted;
     private string refreshID = "", status = "正在准备本机统计…", viewedBudget = "";
     private string publishedState = "";
+    private long stateRevision;
+    private int subscribedMainPID;
+    private JsonObject? pendingMainState;
+    private bool pushingMainState;
+    private double nextMainStateRetry;
     private string localError = "", settingsBackupPath = "";
     private int viewedPID;
     private bool viewing;
     private bool monitorReading, deliveringTasks, monitorViewing;
     private string viewedMonitor = "", viewedMessage = "";
     private int monitorViewedPID;
-    private string[]? notifying;
     private double notificationAttempt;
     private string[] lastNotifiedRules = [];
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -57,7 +64,7 @@ internal sealed class Host : IDisposable
         this.demo = demo; this.noQuota = noQuota; Directory.CreateDirectory(Paths.Base);
         budgets = new BudgetStore(Path.Combine(Paths.Base, "budgets.json"));
         monitor = new TaskMonitorService(Path.Combine(Paths.Base, demo ? "demo-task-monitor.json" : "task-monitor.json"), settings.Home);
-        taskNotifications = new TaskNotifications(request => Application.Current.Dispatcher.BeginInvoke(() => Guard(async () => { await Handle(request); })),
+        taskNotifications = new TaskNotifications(request => Application.Current.Dispatcher.BeginInvoke(() => Guard(async () => { var result = await Handle(request); TaskMonitorUi.EnsureSuccess(result); })),
             !demo && Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") != "1");
         try { quota = Quota.Describe(J.Read(Path.Combine(Paths.Base, "quota.json"), 65536)); } catch (Exception) { quota = Quota.Describe(new()); }
         if (demo) { var s = DemoData.State(); today = s.O("today"); filtered = s.O("filtered"); quota = s.O("quota"); demoBudgets = s.O("budgets"); status = "演示数据 · 未读取账号或本机日志"; dirty = false; }
@@ -66,28 +73,22 @@ internal sealed class Host : IDisposable
         tray.OpenMonitor = id => Guard(() => OpenMain("monitor", monitorID: id));
         tray.OpenMonitorSettings = ShowMonitorSettings;
         tray.MonitorRequest = request => Handle(request);
-        tray.BalloonShown = () =>
-        {
-            if (notifying is null) return;
-            try { budgets.Apply("acknowledge", J.Obj(("ids", notifying)), settings.Home); NotifyState(); } catch (Exception e) { status = e.Message; }
-        };
-        tray.BalloonFinished = () => notifying = null;
-        tray.BalloonClicked = () => Guard(() => OpenMain("budget", lastNotifiedRules.FirstOrDefault()));
         Watch(); SetMode(settings.Data.S("mode", "both"), false);
         tick.Tick += (_, _) => Tick(); tick.Start();
         _ = Ipc.Listen(Paths.Pipe, req => Application.Current.Dispatcher.InvokeAsync(() => Handle(req)).Task.Unwrap(), stop.Token,
             req => { if (req.S("action") == "quit") Application.Current.Dispatcher.BeginInvoke(() => Guard(Quit)); });
         Guard(async () => { await ReadIndex(); await Refresh(true); });
         if (!demo) Guard(() => PollMonitor(true));
-        if (!demo && !noQuota) Guard(RefreshQuota);
+        if (!demo && QuotaEnabled) Guard(RefreshQuota);
     }
     private void Guard(Func<Task> work) { async void Run() { try { await work(); } catch (Exception e) { if (!disposed) { status = e.Message; NotifyState(); } } } Run(); }
     public JsonObject State(bool includeDemoUsage = false)
     {
         var value = J.Obj(("settings", settings.Data), ("home", settings.Home), ("cache", Paths.Cache(settings.Home)), ("quota", Quota.Describe(quota)), ("today", today), ("filtered", filtered),
             ("budgets", J.Obj(("rules", budgets.Rules), ("summaries", budgets.Summaries), ("events", budgets.Events), ("error", budgets.PersistenceError), ("recovery", budgets.Recovery))),
-            ("busy", refreshID.Length > 0 || scanning || quotaReading), ("status", settings.Error.Length > 0 ? settings.Error : localError.Length > 0 ? "本地更新失败：" + localError : status),
+            ("busy", refreshID.Length > 0 || scanning || QuotaEnabled && quotaReading), ("status", settings.Error.Length > 0 ? settings.Error : localError.Length > 0 ? "本地更新失败：" + localError : status),
             ("settingsError", settings.Error), ("settingsBackupPath", settingsBackupPath), ("updates", UpdateStates()), ("hostPID", Environment.ProcessId), ("mainPID", MainAlive ? main!.Id : 0), ("demo", demo));
+        value["stateRevision"] = stateRevision;
         var monitored = monitor.Snapshot(); monitored["notification"] = taskNotifications.Status(); value["monitor"] = monitored;
         if (demo) { value["budgets"] = demoBudgets.DeepClone(); if (includeDemoUsage) value["usage"] = DemoData.Usage(); }
         return value;
@@ -99,19 +100,42 @@ internal sealed class Host : IDisposable
         string quotaError = quota.S("error");
         return J.Obj(("local", J.Obj(("busy", localBusy), ("error", localError), ("updatedAt", lastRead > 0 ? lastRead : null),
                 ("status", localBusy ? "本地日志更新中" : localError.Length > 0 ? "本地更新失败，可重试" : settings.Refresh == 0 ? "本地自动更新已暂停" : status))),
-            ("quota", J.Obj(("busy", quotaReading), ("enabled", !noQuota), ("error", quotaError), ("updatedAt", quota.N("updated_at")),
-                ("status", noQuota ? "账号额度读取未启用" : quotaReading ? "账号额度更新中" : quotaError.Length > 0 ? "账号额度更新失败，可重试" : Quota.Describe(quota).B("stale") ? "账号额度为上次记录" : "账号额度已更新"))));
+            ("quota", J.Obj(("busy", QuotaEnabled && quotaReading), ("enabled", QuotaEnabled), ("locked", noQuota), ("error", QuotaEnabled ? quotaError : ""), ("updatedAt", quota.N("updated_at")),
+                ("status", !QuotaEnabled ? "账号额度读取已关闭 · 保留上次快照" : quotaReading ? "账号额度更新中" : quotaError.Length > 0 ? "账号额度更新失败，可重试" : Quota.Describe(quota).B("stale") ? "账号额度为上次记录" : "账号额度已更新"))));
     }
     private void NotifyState()
     {
         if (disposed) return;
-        var state = State(); string signature = J.Text(state) + Theme.PreferenceSignature(settings.Data, "main") + Theme.PreferenceSignature(settings.Data, "floating") + Theme.PreferenceSignature(settings.Data, "tray");
+        var state = State(); state.Remove("stateRevision");
+        string signature = J.Text(state) + Theme.PreferenceSignature(settings.Data, "main") + Theme.PreferenceSignature(settings.Data, "floating") + Theme.PreferenceSignature(settings.Data, "tray");
         if (signature == publishedState) return;
+        state["stateRevision"] = ++stateRevision;
         publishedState = signature; Theme.Apply(Theme.Resolve(settings.Data, "main")); capsule?.Update(state);
+        arcColors?.UpdateTheme(!Theme.Resolve(settings.Data, "floating"));
         string tip = "今日 " + J.Compact(today.O("summary").N("total_tokens")) + " · " + state.O("quota").S("compact");
         if (state.O("monitor").A("watches").Count > 0 || state.O("monitor").O("summary").I("unread") > 0)
             tip += " · " + TaskMonitorVisual.SummaryText(state);
         tray.Update(tip, state);
+        if (MainAlive && subscribedMainPID == main!.Id) { pendingMainState = state.Copy(); Guard(PushMainState); }
+    }
+    private async Task PushMainState()
+    {
+        if (pushingMainState || disposed || J.Now < nextMainStateRetry) return;
+        pushingMainState = true;
+        try
+        {
+            while (pendingMainState != null && MainAlive && subscribedMainPID == main!.Id)
+            {
+                var snapshot = pendingMainState; pendingMainState = null; int target = subscribedMainPID;
+                try { await Ipc.Send(J.Obj(("action", "host-state"), ("targetPID", target), ("state", snapshot)), Paths.Pipe + "-main", 2500); nextMainStateRetry = 0; }
+                catch (Exception)
+                {
+                    if (MainAlive && subscribedMainPID == target) { pendingMainState ??= snapshot; nextMainStateRetry = J.Now + 2; }
+                    break;
+                }
+            }
+        }
+        finally { pushingMainState = false; }
     }
     private void Watch()
     {
@@ -124,7 +148,8 @@ internal sealed class Host : IDisposable
     private void Tick()
     {
         if (disposed) return; double now = J.Now;
-        if (!demo && !noQuota && now - lastQuota >= 60 && !quotaReading) Guard(RefreshQuota);
+        if (pendingMainState != null && now >= nextMainStateRetry) Guard(PushMainState);
+        if (!demo && QuotaEnabled && now - lastQuota >= 60 && !quotaReading) Guard(RefreshQuota);
         if (now - lastReconcile >= 600) { lastReconcile = now; dirty = true; Watch(); }
         if (main is not null && !MainAlive && mainGate.CurrentCount > 0) { main.Dispose(); main = null; dirty = true; viewing = false; }
         if (refreshID.Length > 0 && now - refreshStarted > 120) { refreshID = ""; localError = "本地刷新超时，可重新尝试"; NotifyState(); }
@@ -186,6 +211,7 @@ internal sealed class Host : IDisposable
                     ("reason", suppression.Length > 0 ? suppression : "已在应用内显示，或该消息已超过即时提醒时效")));
             var ready = pending.Except(inline).Where(x => J.Now - (x.N("createdAt") ?? J.Now) >= 3 || x.S("status") is "waiting" or "failed").Take(32).ToArray();
             if (ready.Length == 0) return;
+            ready = TaskNotifications.FitBatch(ready, batch => TaskNotifications.BuildXml(batch, preferences));
             if (monitor.Snapshot().S("error").Length > 0) return;
             var delivery = taskNotifications.Send(ready, preferences);
             delivery["ids"] = System.Text.Json.JsonSerializer.SerializeToNode(ready.Select(x => x.S("id")).ToArray());
@@ -212,7 +238,7 @@ internal sealed class Host : IDisposable
         catch (Exception e) { if (ticket == generation) localError = e.Message; }
         finally { reading = false; NotifyState(); if (queued && !disposed) { queued = false; Guard(() => ReadIndex()); } }
     }
-    public Task Refresh(bool force) => RefreshOperations.Run(force, !noQuota, () => RefreshLocal(force), RefreshQuota);
+    public Task Refresh(bool force) => RefreshOperations.Run(force, QuotaEnabled, () => RefreshLocal(force), RefreshQuota);
     private async Task RefreshLocal(bool force)
     {
         if (demo) { NotifyState(); return; }
@@ -234,30 +260,46 @@ internal sealed class Host : IDisposable
         catch (Exception e) { if (ticket == generation) { localError = e.Message; dirty = true; } }
         finally { scanning = false; scanCompletion?.TrySetResult(); scanCompletion = null; NotifyState(); }
     }
-    private Task RefreshQuota() => noQuota || disposed ? Task.CompletedTask : quotaTask is { IsCompleted: false } ? quotaTask : quotaTask = ReadQuota();
+    private Task RefreshQuota() => !QuotaEnabled || disposed ? Task.CompletedTask : quotaTask is { IsCompleted: false } ? quotaTask : quotaTask = ReadQuota();
     private async Task ReadQuota()
     {
-        if (quotaReading || disposed) return; quotaReading = true; lastQuota = J.Now;
+        if (quotaReading || disposed || !QuotaEnabled) return; quotaReading = true; lastQuota = J.Now;
+        long revision = quotaRevision;
         NotifyState();
-        try { var result = await Quota.Read(job, quota, demo); if (disposed) return; quota = result; if (!demo) J.Write(Path.Combine(Paths.Base, "quota.json"), quota); budgets.Evaluate(null, Quota.Describe(quota), settings.Home); }
-        catch (Exception e) { if (!disposed) { quota = quota.Copy(); quota["error"] = "账号额度更新失败：" + e.Message; quota["attempted_at"] = J.Now; } }
-        finally { quotaReading = false; if (!disposed) NotifyState(); }
+        try { var result = await Quota.Read(job, quota, demo); if (disposed || revision != quotaRevision || !QuotaEnabled) return; quota = result; if (!demo) J.Write(Path.Combine(Paths.Base, "quota.json"), quota); budgets.Evaluate(null, Quota.Describe(quota), settings.Home); }
+        catch (Exception e) { if (!disposed && revision == quotaRevision && QuotaEnabled) { quota = quota.Copy(); quota["error"] = "账号额度更新失败：" + e.Message; quota["attempted_at"] = J.Now; } }
+        finally
+        {
+            quotaReading = false;
+            if (!disposed)
+            {
+                NotifyState();
+                if (revision != quotaRevision && QuotaEnabled)
+                    _ = Application.Current.Dispatcher.BeginInvoke(() => Guard(RefreshQuota));
+            }
+        }
     }
     private void DeliverAlerts()
     {
-        if (notifying is not null) return;
         var pending = budgets.Evaluate(null, Quota.Describe(quota), settings.Home).Rows().ToArray();
-        if (pending.Length == 0) { notifying = null; return; }
+        if (pending.Length == 0) return;
         GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
         bool viewed = viewing && MainAlive && viewedPID == main!.Id && pid == viewedPID;
         var inline = pending.Where(x => viewed && x.S("ruleID") == viewedBudget).Select(x => x.S("id")).ToArray();
         if (inline.Length > 0) { try { budgets.Apply("acknowledge", J.Obj(("ids", inline)), settings.Home); } catch (Exception e) { status = "提醒状态未能保存：" + e.Message; return; } }
-        var active = pending.Where(x => !inline.Contains(x.S("id"))).ToArray();
+        var active = pending.Where(x => !inline.Contains(x.S("id"))).Take(32).ToArray();
         if (active.Length == 0) return;
+        active = TaskNotifications.FitBatch(active, BudgetNotifications.BuildXml);
         if (J.Now - notificationAttempt < 30) return;
-        string body = string.Join("\n", active.Take(3).Select(x => x.S("name") + " · " + x.S("message"))) + (active.Length > 3 ? $"\n另有 {active.Length - 3} 项预算触发提醒" : "");
-        notifying = active.Select(x => x.S("id")).ToArray(); lastNotifiedRules = active.Select(x => x.S("ruleID")).Distinct().ToArray(); notificationAttempt = J.Now;
-        if (!tray.Notify("Codex 用量 · 预算提醒", body)) notifying = null;
+        notificationAttempt = J.Now;
+        var delivery = BudgetNotifications.Send(active, !demo && taskNotifications.Status().B("available"));
+        if (delivery.S("status") == "sent")
+        {
+            lastNotifiedRules = active.Select(x => x.S("ruleID")).Distinct().ToArray();
+            try { budgets.Apply("acknowledge", J.Obj(("ids", active.Select(x => x.S("id")).ToArray())), settings.Home); }
+            catch (Exception e) { status = "预算通知已提交，但提醒状态未能保存：" + e.Message; }
+        }
+        else if (delivery.S("status") == "failed") status = delivery.S("reason");
     }
     public async Task OpenMain(string? page = null, string? budgetID = null, string? monitorID = null, string? messageID = null, string? monitorList = null)
     {
@@ -274,7 +316,7 @@ internal sealed class Host : IDisposable
                     var focus = J.Obj(("action", "focus"), ("page", page), ("budgetID", budgetID), ("monitorID", monitorID), ("messageID", messageID), ("monitorList", monitorList));
                     // Choose the unread/history list from the same current snapshot as
                     // the floating header, even if the main panel has not polled yet.
-                    if (monitorList == "messages") focus["state"] = State();
+                    if (monitorList == "messages" || monitorList?.StartsWith("notification:", StringComparison.Ordinal) == true) focus["state"] = State();
                     await Ipc.Send(focus, Paths.Pipe + "-main"); return;
                 }
                 catch (IOException) { if (MainAlive) throw; }
@@ -284,7 +326,7 @@ internal sealed class Host : IDisposable
             if (budgetID is not null) { args.Add("--budget-id"); args.Add(budgetID); }
             if (monitorID is not null) { args.Add("--monitor-id"); args.Add(monitorID); }
             if (messageID is not null) { args.Add("--message-id"); args.Add(messageID); }
-            if (monitorList == "messages") { args.Add("--monitor-list"); args.Add(monitorList); }
+            if (monitorList == "messages" || monitorList?.StartsWith("notification:", StringComparison.Ordinal) == true) { args.Add("--monitor-list"); args.Add(monitorList); }
             main?.Dispose(); main = job.Start(Environment.ProcessPath!, args.ToArray()); main.StandardInput.Close(); _ = Processes.ReadBounded(main.StandardError, 65536, stop.Token); _ = Processes.ReadBounded(main.StandardOutput, 65536, stop.Token);
             // The helper asks for its initial state over the host pipe when ready.
         }
@@ -317,6 +359,7 @@ internal sealed class Host : IDisposable
     private void ShowFloating()
     {
         if (capsule is null) { capsule = new CapsuleWindow(CapsuleAction); capsule.Restore(settings.Floating); capsule.Update(State()); }
+        if (arcColors != null) capsule.Surface.ArcStylePreview = arcColors.Draft;
         if (Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") == "1") capsule.Opacity = 0;
         capsule.Show();
     }
@@ -370,6 +413,7 @@ internal sealed class Host : IDisposable
                 case "refresh": await Refresh(true); return;
                 case "updateStatus": ShowUpdateStatus(); return;
                 case "settings-dialog": ShowSettings(value ?? "appearance"); return;
+                case "arcColors": ShowArcColors(); return;
                 case "quit": await Quit(); return;
                 case "only": SetMode("float"); return;
                 case "menu": SetMode("tray"); return;
@@ -406,6 +450,10 @@ internal sealed class Host : IDisposable
     {
         switch (request.S("action"))
         {
+            case "subscribe-state":
+                if (!MainAlive || request.I("pid") != main!.Id) throw new InvalidOperationException("主面板身份已失效");
+                subscribedMainPID = main.Id; pendingMainState = null; nextMainStateRetry = 0;
+                return State(true);
             case "state": return State(true);
             case "choices":
             case "budget-choices":
@@ -427,17 +475,28 @@ internal sealed class Host : IDisposable
                 Process.Start(new ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true }); return State();
             case "monitor-viewing": monitorViewedPID = request.I("pid"); monitorViewing = request.B("active"); viewedMonitor = request.S("taskID"); viewedMessage = request.S("messageID"); return State();
             case "monitor-notification":
+                if (request.S("operation") == "pause30") return await MonitorOperation("settings", J.Obj(("patch", J.Obj(("pausedUntil", J.Now + 1800)))));
                 var ids = request.A("ids").OfType<System.Text.Json.Nodes.JsonValue>().Select(x => x.TryGetValue<string>(out var id) ? id : "").ToHashSet(StringComparer.Ordinal);
                 var messages = monitor.Snapshot().A("messages").Rows().Where(x => ids.Contains(x.S("id"))).ToArray();
                 if (request.S("operation") == "read") return await MonitorOperation("read", J.Obj(("ids", messages.Select(x => x.S("id")).ToArray())));
-                if (messages.Length == 1) await OpenMain("monitor", monitorID: messages[0].S("taskID"), messageID: messages[0].S("id"));
-                else await OpenMain("monitor");
+                if (ids.SetEquals(["notification-test"])) await OpenMain("monitor");
+                else await OpenMain("monitor", monitorList: "notification:" + string.Join(',', ids));
+                return State();
+            case "budget-notification":
+                if (request.S("operation") == "view")
+                    await OpenMain("budget", budgets.NotificationAlerts(request.A("ids")).FirstOrDefault()?.S("ruleID"));
+                else if (request.S("operation") is "pause30" or "pauseCycle")
+                {
+                    budgets.Apply("pause-notification", J.Obj(("ids", request.A("ids")), ("mode", request.S("operation") == "pauseCycle" ? "cycle" : "duration")), settings.Home);
+                    await ReadIndex();
+                }
                 return State();
             case "refresh": Guard(() => Refresh(true)); break;
             case "refresh-local": Guard(() => RefreshLocal(true)); break;
             case "refresh-quota": Guard(RefreshQuota); break;
             case "update-status": _ = Application.Current.Dispatcher.BeginInvoke(ShowUpdateStatus); return State();
             case "settings-dialog": ShowSettings(request.S("page", "appearance")); return State();
+            case "arcColors": ShowArcColors(); return State();
             case "view-budget": ViewBudget(request.S("budgetID")); break;
             case "floating-settings": ApplyFloating(request.O("patch")); break;
             case "recover-settings":
@@ -455,8 +514,13 @@ internal sealed class Host : IDisposable
                     var patch = request.O("patch");
                     if (patch.ContainsKey("refresh") && (patch.N("refresh") is not double r || r < 0 || r > 3600 || r != Math.Truncate(r))) throw new ArgumentException("刷新间隔需要0至3600秒");
                     if (patch["appearance"] is JsonObject appearance) Theme.ValidateAppearance(appearance);
+                    if (patch.ContainsKey("quotaEnabled") && (patch["quotaEnabled"] is not JsonValue enabled || !enabled.TryGetValue<bool>(out _))) throw new ArgumentException("账号额度开关无效");
                     var old = settings.Data.Copy(); settings.Update(patch);
-                    if (old.I("refresh", 5) != settings.Refresh && MainAlive) Guard(async () => { await Ipc.Send(J.Obj(("action", "settings"), ("settings", settings.Data)), Paths.Pipe + "-main"); });
+                    if (old.B("quotaEnabled", true) != settings.Data.B("quotaEnabled", true))
+                    {
+                        quotaRevision++;
+                        if (QuotaEnabled) { lastQuota = 0; if (!quotaReading) Guard(RefreshQuota); }
+                    }
                     if (patch.ContainsKey("floating")) { generation++; filtered = new(); Guard(() => ReadIndex()); }
                     if (patch.ContainsKey("mode")) SetMode(settings.Data.S("mode", "both"), false);
                     break;
@@ -522,6 +586,31 @@ internal sealed class Host : IDisposable
     }
     private async Task Quit() { if (preferences != null) await preferences.PrepareClose(); await CloseMain(); Dispose(); Application.Current.Shutdown(); }
     private void ShowUpdateStatus() => ShowSettings("updates");
+    private void ShowArcColors()
+    {
+        if (arcColors == null)
+        {
+            var style = CapsuleArcStyle.Load(settings.Floating, out string? warning);
+            var editor = new ArcColorEditor(style, !Theme.Resolve(settings.Data, "floating"), CapsuleEdgeDisplay.From(State()).RemainingFraction, warning);
+            arcColors = editor;
+            editor.Preview = draft => { if (capsule != null) capsule.Surface.ArcStylePreview = draft; };
+            editor.Save = draft =>
+            {
+                try
+                {
+                    var floating = settings.Floating.Copy(); floating["arcStyle"] = draft.ToJson();
+                    settings.Update(J.Obj(("floating", floating))); NotifyState();
+                    return Task.FromResult<string?>(null);
+                }
+                catch (Exception e) { return Task.FromResult<string?>("配色尚未保存：" + e.Message); }
+            };
+            editor.Closed += (_, _) => { if (capsule != null) capsule.Surface.ArcStylePreview = null; if (ReferenceEquals(arcColors, editor)) arcColors = null; };
+        }
+        if (Environment.GetEnvironmentVariable("CODEX_USAGE_TEST_BACKGROUND") == "1") return;
+        if (!arcColors.IsVisible) arcColors.Show();
+        if (arcColors.WindowState == WindowState.Minimized) arcColors.WindowState = WindowState.Normal;
+        arcColors.Activate();
+    }
     private void ShowMonitorSettings()
     {
         if (monitorPreferences == null) { monitorPreferences = new TaskMonitorSettingsWindow(null, () => State(), Handle); monitorPreferences.Closed += (_, _) => monitorPreferences = null; }
@@ -539,7 +628,7 @@ internal sealed class Host : IDisposable
         if (preferences.WindowState == WindowState.Minimized) preferences.WindowState = WindowState.Normal;
         preferences.Activate();
     }
-    public void Dispose() { if (disposed) return; disposed = true; stop.Cancel(); tick.Stop(); watcher?.Dispose(); capsule?.Close(); preferences?.Close(); monitorPreferences?.Close(); taskNotifications.Dispose(); monitor.Dispose(); tray.Dispose(); job.Dispose(); main?.Dispose(); stop.Dispose(); }
+    public void Dispose() { if (disposed) return; disposed = true; stop.Cancel(); tick.Stop(); pendingMainState = null; watcher?.Dispose(); arcColors?.Close(); capsule?.Close(); preferences?.Close(); monitorPreferences?.Close(); taskNotifications.Dispose(); monitor.Dispose(); tray.Dispose(); job.Dispose(); main?.Dispose(); stop.Dispose(); }
 }
 
 internal static class Dialogs

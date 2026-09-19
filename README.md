@@ -12,11 +12,11 @@ A native desktop companion for Codex: local token statistics and account quota, 
 
 | 平台 | 当前发行包 | 打开方式 |
 | --- | --- | --- |
-| Windows x64 | [v1.0.2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip) · [SHA-256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.2/codex-usage-desktop-v1.0.2-windows-x64.zip.sha256) | 完整解压到固定目录，运行 `CodexUsage.exe` |
+| Windows x64 | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip) · [SHA-256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip.sha256) | 完整解压到固定目录，运行 `CodexUsage.exe` |
 | macOS Apple Silicon（M 系列） | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-AppleSilicon.zip) | 将 `Codex用量.app` 放入应用程序目录 |
 | macOS Intel | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-Intel.zip) | 将 `Codex用量.app` 放入应用程序目录 |
 
-**macOS 最新为 v1.0.3（Apple Silicon / Intel），Windows 保持 v1.0.2。** macOS 新增单窗口弧线调色、微弧融合贴边轮廓及按任务状态调整尺寸。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
+**Windows 与 macOS 最新均为 v1.0.3。** 两端支持单窗口弧线调色、微弧融合贴边轮廓及按任务状态调整尺寸；Windows 此次还补齐通知关联消息、通知内暂停和账号额度开关。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
 
 Windows 包自带 .NET 与 Python，无需另装运行环境；请保留完整目录，不要单独移动 EXE。更新前从托盘菜单退出旧版本，再完整解压新包。用户配置与记录保存在 `%LOCALAPPDATA%\CodexUsageDashboard\desktop`，与程序目录分离。构建目标为 Windows 10 2004 及以上 x64，日常验证环境为 Windows 11；未提供 Windows ARM64 原生包。详见 [Windows 使用指南](docs/windows/README.md)。
 
@@ -38,7 +38,7 @@ macOS 安装助手固定安装 v1.0.3，自动选择芯片并校验 ZIP 和签�
 
 ## 预算提醒与任务监控
 
-**两端 v1.0.2 预算提醒**支持 Token、估算金额和官方余量下限，按周期、模型或任务设置范围及阈值。金额使用自填模型单价估算，不是账单；缺少价格或记录不完整会明确显示。可暂停提醒，编辑草稿可恢复，浮窗可查看选中的预算。见 [Windows 预算提醒](docs/windows/BUDGETS.md)与 [macOS 预算提醒](docs/macos/BUDGETS.md)。
+**两端预算提醒**支持 Token、估算金额和官方余量下限，按周期、模型或任务设置范围及阈值。金额使用自填模型单价估算，不是账单；缺少价格或记录不完整会明确显示。可暂停提醒，编辑草稿可恢复，浮窗可查看选中的预算。见 [Windows 预算提醒](docs/windows/BUDGETS.md)与 [macOS 预算提醒](docs/macos/BUDGETS.md)。
 
 **两端均提供任务监控。** 独立选择任务，设置“本轮结束后提醒”或“每轮结束都提醒”。圆环、贴边侧签与托盘的小符号区分执行中、需要处理、已结束和状态待确认；额度弧与电池条继续表达额度，不冒充任务完成百分比。
 

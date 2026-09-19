@@ -144,15 +144,18 @@ internal static class CapsuleDockingTests
             pointer = null;
             var clock = Stopwatch.StartNew();
             window.CheckDockPointer();
-            bool observedMotion = false;
+            bool observedMotion = false, observedContour = false, monotonicContour = true;
+            double previousContour = 0;
             double? firstMotionMs = null;
             bool hidden = await Wait(window, () =>
             {
                 if (window.DockMotionActive && !observedMotion) { observedMotion = true; firstMotionMs = clock.Elapsed.TotalMilliseconds; }
+                if (window.DockMotionActive) { double contour = window.Surface.Docking; observedContour |= contour > 0 && contour < 1; monotonicContour &= contour >= previousContour; previousContour = contour; }
                 return window.HiddenAtEdge && !window.IsAnimating;
             });
             measurements[prefix + "HideMs"] = clock.Elapsed.TotalMilliseconds;
             measurements[prefix + "HideMotionObserved"] = observedMotion;
+            Check(!SystemParameters.ClientAreaAnimation || observedContour && monotonicContour, prefix + "-continuous-edge-contour", "The circle contour passes monotonically through intermediate crest shapes before the hidden endpoint.");
             if (firstMotionMs is double start) measurements[prefix + "HideMotionStartMs"] = start;
             Check(hidden && clock.Elapsed.TotalMilliseconds >= 520 && (firstMotionMs is null || firstMotionMs >= 520),
                 prefix + "-delayed-hide", "Departure waits for the 550 ms grace period, then reaches a stable edge indicator within the bounded wait.");
@@ -217,10 +220,40 @@ internal static class CapsuleDockingTests
                     CapsuleEdge.Top => Math.Abs(tab.Top - work.Top),
                     _ => Math.Abs(tab.Bottom - work.Bottom)
                 };
-                Check(window.HiddenAtEdge && boundaryError <= 1.1 && Math.Abs(tab.Width - (vertical ? 28 : 76) * dpi.DpiScaleX) <= 1.1
-                    && Math.Abs(tab.Height - (vertical ? 72 : 28) * dpi.DpiScaleY) <= 1.1 && Near(window.CompactPixelBounds, compact),
-                    name + "-indicator-geometry", "The 28×72 or 76×28 DIP indicator touches its work edge and preserves compact origin.");
+                Check(window.HiddenAtEdge && boundaryError <= 1.1 && Math.Abs(tab.Width - (vertical ? 44 : 88) * dpi.DpiScaleX) <= 1.1
+                    && Math.Abs(tab.Height - (vertical ? 68 : 28) * dpi.DpiScaleY) <= 1.1 && Near(window.CompactPixelBounds, compact),
+                    name + "-indicator-geometry", "The 44×68 or 88×28 DIP indicator touches its work edge and preserves compact origin.");
 
+                var monitorState = State();
+                monitorState["monitor"] = J.Obj(("summary", J.Obj(("active", 1), ("unread", 120), ("status", "running"))));
+                var nativeEnvelope = window.PixelBounds; window.Update(monitorState);
+                bool intermediateResize = false;
+                await Wait(window, () =>
+                {
+                    double length = vertical ? window.VisualPixelBounds.Height / dpi.DpiScaleY : window.VisualPixelBounds.Width / dpi.DpiScaleX;
+                    intermediateResize |= window.DockMotionActive && length > (vertical ? 68 : 88) + .1 && length < (vertical ? 96 : 124) - .1;
+                    return !window.IsAnimating;
+                });
+                Check(!SystemParameters.ClientAreaAnimation || intermediateResize, name + "-monitor-resize-interpolates", "Monitor changes pass through intermediate tab sizes without waking the circle.");
+                var expandedTab = window.VisualPixelBounds;
+                Check(window.HiddenAtEdge && Near(window.PixelBounds, nativeEnvelope) && Near(window.CompactPixelBounds, compact)
+                    && Math.Abs(expandedTab.Width - (vertical ? 44 : 124) * dpi.DpiScaleX) <= 1.1
+                    && Math.Abs(expandedTab.Height - (vertical ? 96 : 28) * dpi.DpiScaleY) <= 1.1,
+                    name + "-monitor-enlarges-tab", "Active tasks or unread messages expand the tab without moving the native host or compact anchor.");
+                monitorState.O("monitor").O("summary")["active"] = 0; monitorState.O("monitor").O("summary")["status"] = "completed"; window.Update(monitorState);
+                Check(Near(window.VisualPixelBounds, expandedTab), name + "-unread-retains-tab", "Finishing the task preserves the larger tab while unread messages remain.");
+                monitorState.O("monitor").O("summary")["unread"] = 0; window.Update(monitorState);
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    await Task.Delay(40); var interrupted = window.VisualPixelBounds;
+                    monitorState.O("monitor").O("summary")["unread"] = 137; window.Update(monitorState);
+                    Check(Near(window.VisualPixelBounds, interrupted), name + "-resize-reverses-in-place", "A new unread message reverses the shrinking tab from its current frame.");
+                    await Wait(window, () => !window.IsAnimating);
+                    Check(window.HiddenAtEdge && Near(window.VisualPixelBounds, expandedTab), name + "-resize-converges-to-latest", "Interrupted size transitions finish at the latest unread state without revealing the ring.");
+                    monitorState.O("monitor").O("summary")["unread"] = 0; window.Update(monitorState);
+                }
+                await Wait(window, () => !window.IsAnimating);
+                Check(Near(window.VisualPixelBounds, tab) && Near(window.PixelBounds, nativeEnvelope), name + "-read-shortens-tab", "Reading the final message returns to a centered short tab inside the same host.");
                 pointer = Center(tab); window.CheckDockPointer();
                 pointer = null; window.CheckDockPointer();
                 await Task.Delay(180); Audit(window);
@@ -340,9 +373,9 @@ internal static class CapsuleDockingTests
                 Check(midSlide, "hide-reversal-starts-mid-slide", "The injected return occurs 50 ms after observing the sliding-out animation, before its edge-indicator endpoint.");
                 var beforeReturn = reversal.VisualPixelBounds;
                 int beforeDirections = reversal.ExpansionTransitions;
-                pointer = Center(original);
                 var dpi = VisualTreeHelper.GetDpi(reversal);
-                Check(pointer.Value.X > original.Left + (28 + 8) * dpi.DpiScaleX,
+                pointer = new Point(original.Left + 64 * dpi.DpiScaleX, original.Top + original.Height / 2);
+                Check(pointer.Value.X > original.Left + (44 + 8) * dpi.DpiScaleX,
                     "hide-reversal-outside-tab-hotzone", "The return point is inside the compact ring but beyond the future indicator's +8-DIP hotzone.");
                 Rect? firstReturnFrame = null;
                 bool reachedHiddenEndpoint = reversal.HiddenAtEdge;

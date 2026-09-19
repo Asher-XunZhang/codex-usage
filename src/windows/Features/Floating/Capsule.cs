@@ -110,12 +110,15 @@ internal sealed class CapsuleSurface : FrameworkElement
     protected override int VisualChildrenCount => 1;
     protected override Visual GetVisualChild(int index) => index == 0 ? drawing : throw new ArgumentOutOfRangeException(nameof(index));
     public JsonObject State { get; private set; } = new();
+    private CapsuleArcStyle? arcStylePreview;
+    internal CapsuleArcStyle? ArcStylePreview { get => arcStylePreview; set { arcStylePreview = value; Redraw(); } }
     public double Expansion;
     internal Rect? CompactBounds;
     internal Rect? AnimationBounds;
     internal Rect? PanelBounds;
     internal Rect? DockClip;
     internal CapsuleEdge Edge;
+    internal double Docking = 1;
     internal Size? HostSize;
     internal bool RingVisible => Edge == CapsuleEdge.None && Expansion <= .001;
     private Rect HostBounds => new(HostSize ?? new Size(ActualWidth, ActualHeight));
@@ -128,7 +131,7 @@ internal sealed class CapsuleSurface : FrameworkElement
     {
         if (DockClip is Rect clip && !clip.Contains(point)) return false;
         var r = DrawingBounds; var local = new Point(point.X - r.X, point.Y - r.Y);
-        return Edge != CapsuleEdge.None ? CapsuleEdgeIndicator.Shape(r.Size, Edge).FillContains(local) : CapsuleGeometry.Contains(local, r.Size, (38 - CurrentRadius) / 16);
+        return Edge != CapsuleEdge.None ? CapsuleEdgeIndicator.Shape(r.Size, Edge, Docking).FillContains(local) : CapsuleGeometry.Contains(local, r.Size, (38 - CurrentRadius) / 16);
     }
     private readonly record struct TextKey(string Text, double Width, double Size, Color Color, bool Bold, TextAlignment Alignment, double Dpi);
     private static readonly FontFamily Fonts = new("Segoe UI, Microsoft YaHei UI");
@@ -571,7 +574,20 @@ internal sealed class CapsuleSurface : FrameworkElement
         if (Edge != CapsuleEdge.None)
         {
             dc.PushTransform(new TranslateTransform(DrawingBounds.X, DrawingBounds.Y));
-            CapsuleEdgeIndicator.Draw(dc, DrawingBounds.Size, Edge, State, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            var size = DrawingBounds.Size;
+            CapsuleEdgeIndicator.Draw(dc, size, Edge, State, VisualTreeHelper.GetDpi(this).PixelsPerDip, Docking);
+            if (Docking < .5)
+            {
+                dc.PushClip(CapsuleEdgeIndicator.Shape(size, Edge, Docking)); dc.PushOpacity(1 - Docking * 2);
+                var savedEdge = Edge; var savedBounds = AnimationBounds; var savedClip = DockClip;
+                try
+                {
+                    Edge = CapsuleEdge.None; DockClip = null; AnimationBounds = new Rect((size.Width - 76) / 2, (size.Height - 76) / 2, 76, 76);
+                    Draw(dc);
+                }
+                finally { Edge = savedEdge; AnimationBounds = savedBounds; DockClip = savedClip; }
+                dc.Pop(); dc.Pop();
+            }
             dc.Pop();
             RenderMilliseconds += Stopwatch.GetElapsedTime(renderStart).TotalMilliseconds; return;
         }
@@ -639,14 +655,31 @@ internal sealed class CapsuleSurface : FrameworkElement
             dc.DrawEllipse(null, new Pen(track, 5), new Point(w / 2, 38), 33.5, 33.5);
             if (Level > 0)
             {
-                var pen = new Pen(new SolidColorBrush(CapsuleColors.Color(Level, light)), 5) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
+                var pen = new Pen(new SolidColorBrush((ArcStylePreview ?? CapsuleArcStyle.Load(State.O("settings").O("floating"), out _)).Color(Level, light)), 5) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
                 if (Level >= .999999) dc.DrawEllipse(null, pen, new(w / 2, 38), 33.5, 33.5);
                 else { var arc = new StreamGeometry(); using (var c = arc.Open()) { c.BeginFigure(new(w / 2, 4.5), false, false); double angle = Level * 2 * Math.PI - Math.PI / 2; c.ArcTo(new(w / 2 + 33.5 * Math.Cos(angle), 38 + 33.5 * Math.Sin(angle)), new(33.5, 33.5), 0, Level > .5, SweepDirection.Clockwise, true, false); } dc.DrawGeometry(null, pen, arc); }
             }
             Text(DisplayName, w / 2 - 23, 10, 46, 8.5, secondary, alignment: TextAlignment.Center);
-            Text(Total, w / 2 - 25, 43, 50, 10, ink, alignment: TextAlignment.Center);
-            TextInRect(BudgetQuota ? "余量" : "今日", new(w / 2 - 15, 56, 19, 11), 8.5, secondary);
-            TaskMonitorGlyph.Draw(dc, new(w / 2 + 6, 56.5, 10, 10), TaskMonitorVisual.SummaryStatus(State), light);
+            int unread = CapsuleMonitorBadge.Unread(State);
+            if (unread > 0)
+            {
+                // Keep the value's source visible when the bottom row carries unread counts.
+                TextInRect(BudgetQuota ? "余量" : "今日", new(w / 2 - 27, 43, 17, 12), 7.5, secondary);
+                var amountRun = Layout(Total, 1000, 9, ink);
+                // Trimming uses layout advances, which can be wider than visible ink (especially at small sizes).
+                double amountSize = 9 * Math.Min(1, 33 / Math.Max(1, Math.Max(amountRun.Ink.Width, amountRun.Text.WidthIncludingTrailingWhitespace)));
+                var fittedAmount = Layout(Total, 1000, amountSize, ink);
+                double fittedWidth = Math.Max(fittedAmount.Ink.Width, fittedAmount.Text.WidthIncludingTrailingWhitespace);
+                if (fittedWidth > 34) amountSize *= 33 / fittedWidth;
+                TextInRect(Total, new(w / 2 - 8, 43, 35, 12), amountSize, ink);
+                CapsuleMonitorBadge.Draw(dc, new(w / 2 - 18, 56, 36, 13), TaskMonitorVisual.SummaryStatus(State), unread, light, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            }
+            else
+            {
+                Text(Total, w / 2 - 25, 43, 50, 10, ink, alignment: TextAlignment.Center);
+                TextInRect(BudgetQuota ? "余量" : "今日", new(w / 2 - 15, 56, 19, 11), 8.5, secondary);
+                TaskMonitorGlyph.Draw(dc, new(w / 2 + 6, 56.5, 10, 10), TaskMonitorVisual.SummaryStatus(State), light);
+            }
             dc.Pop(); dc.Pop();
         }
         if (morph.DetailsAlpha > 0)

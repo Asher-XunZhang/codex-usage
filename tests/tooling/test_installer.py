@@ -39,11 +39,11 @@ printf '%s\\n' "$architecture" "$label" "$expected_sha" "$release_url"
     def test_selects_pinned_release_for_intel_native_arm_and_rosetta(self):
         for hardware, reported, architecture, label, digest in [
             ('0', 'x86_64', 'x86_64', 'Intel',
-             '1e5ea76cdf1bcc9a65f5de38c6018da966b29c98a9672c4691f3f42e2e7cff84'),
+             '9a617774613eec737ca391c9967d987abeb27ed24a075ebb8a4a8b02def3d899'),
             ('1', 'arm64', 'arm64', 'AppleSilicon',
-             '61d9f7155d57a0fed83b323169072d8b36c0af06f613c20d649e79baaeda312d'),
+             '1417da86c5b623a1f9e76a36ec2d2dbf38bcf96ade5ded4cd1a130e8bf959fad'),
             ('1', 'x86_64', 'arm64', 'AppleSilicon',
-             '61d9f7155d57a0fed83b323169072d8b36c0af06f613c20d649e79baaeda312d'),
+             '1417da86c5b623a1f9e76a36ec2d2dbf38bcf96ade5ded4cd1a130e8bf959fad'),
         ]:
             with self.subTest(hardware=hardware, reported=reported):
                 result = self.selection(hardware, reported)

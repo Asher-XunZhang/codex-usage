@@ -1,7 +1,11 @@
 import AppKit
 
 private final class UpdateStatusBackground: NSView {
-    override func draw(_ dirtyRect: NSRect) { NSColor.windowBackgroundColor.setFill(); dirtyRect.fill() }
+    override func draw(_ dirtyRect: NSRect) {
+        // Non-clipping AppKit views can receive damage outside their bounds.
+        // Filling that damage would erase the enclosing settings tab strip.
+        NSColor.windowBackgroundColor.setFill(); bounds.fill()
+    }
 }
 
 /// A native, event-updated window. Viewing status does not initiate a scan.

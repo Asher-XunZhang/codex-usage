@@ -39,3 +39,12 @@ Release：<https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.3>。
 | Intel | 31532824 | `1e5ea76cdf1bcc9a65f5de38c6018da966b29c98a9672c4691f3f42e2e7cff84` |
 
 两个包各 397 个文件，逐文件校验、架构、权限、嵌套签名、运行组件和源码摘要已通过。编译提交：`e676b60c391f69f4d2d47b885f2e08271670551a`，两架构均为干净源码构建。安装助手在后续提交中固定这些最终摘要。
+
+## 当前修复包校验（2026-09-20）
+
+| 架构 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Apple Silicon | 31741512 | `1417da86c5b623a1f9e76a36ec2d2dbf38bcf96ade5ded4cd1a130e8bf959fad` |
+| Intel | 31572488 | `9a617774613eec737ca391c9967d987abeb27ed24a075ebb8a4a8b02def3d899` |
+
+编译提交：`ae7922b81cfa49b25a6c1cec3614361306a1fe1d`，两架构均从同一干净源码构建。两个 ZIP 的逐文件摘要、权限、嵌套签名、运行组件与编译源码指纹已通过发行验证；安装助手另行固定上述最终摘要。

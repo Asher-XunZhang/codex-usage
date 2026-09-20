@@ -29,11 +29,11 @@ select_release() {
     case "$architecture" in
         arm64)
             label=AppleSilicon
-            expected_sha=61d9f7155d57a0fed83b323169072d8b36c0af06f613c20d649e79baaeda312d
+            expected_sha=1417da86c5b623a1f9e76a36ec2d2dbf38bcf96ade5ded4cd1a130e8bf959fad
             ;;
         x86_64)
             label=Intel
-            expected_sha=1e5ea76cdf1bcc9a65f5de38c6018da966b29c98a9672c4691f3f42e2e7cff84
+            expected_sha=9a617774613eec737ca391c9967d987abeb27ed24a075ebb8a4a8b02def3d899
             ;;
         *) fail "不支持的芯片架构：$architecture" ;;
     esac

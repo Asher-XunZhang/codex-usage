@@ -1,8 +1,10 @@
 # macOS v1.0.3
 
-发布日期：2026-09-18。提供 Apple Silicon（arm64）和 Intel（x86_64）独立安装包。2026-09-18 macOS 首发时 Windows 为 v1.0.2，该次首发未修改 Windows 界面或共享统计后端。2026-09-19 后续在同一 Release 补充 Windows v1.0.3；既有 macOS 资产、固定摘要和标签保持不变，Windows 来源单独记录。
+发布日期：2026-09-18。提供 Apple Silicon（arm64）和 Intel（x86_64）独立安装包。2026-09-18 macOS 首发时 Windows 为 v1.0.2，该次首发未修改 Windows 界面或共享统计后端。2026-09-19 后续在同一 Release 补充 Windows v1.0.3；当时 macOS 资产与标签未变，Windows 来源单独记录。2026-09-20 在同一 Release 更新两个 macOS 安装包，修复设置导航遮挡；Windows 资产不变。
 
 ## 变化
+
+- 2026-09-20 修复：数据与更新页背景严格限制在页面边界，避免越界重绘覆盖设置导航；Apple Silicon 和 Intel 共用此修复。
 
 - 单窗口弧线调色板：单色、随额度变化的双色渐变、色轮、HEX 输入、预设与恢复内置配色。应用才保存，取消、Escape 和关闭撤销草稿。
 - 修复嵌入预览中的百分比偏移、外层窗口阴影受影响以及预览额度整数不一致。
@@ -12,6 +14,8 @@
 [最新视图与交互图片](FLOATING-1.0.3.md) · [调色板说明](ARC-COLORS.md) · [安装](INSTALL.md)
 
 ## 验证范围
+
+2026-09-20 修复新增背景越界绘制回归，旧代码可触发失败，修复后深浅色通过；设置四页切换、原生布局和 Intel Rosetta 检查通过。Apple Silicon 修复候选已本地安装。以下完整回归数字为 2026-09-18 首发记录，本次发行检查另见 Release 更新说明。
 
 - Apple Silicon 本机完整回归：405 项中 352 项通过、53 项平台相关跳过。包含原生 AppKit、预算、任务监控、浮窗生命周期与安装器测试；不支持的平台保留跳过项。
 - 原生布局检查覆盖深浅主题、四个方向、运行 / 未读 / 无任务、`100%*` 和 `99+`；另验证绘制与命中、任务增减、接缝归属和动画。
@@ -23,11 +27,11 @@
 
 ## 来源与重建
 
-Release：<https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.3>。同名 tag 固定编译源码提交；包内 `source/` 与 `Contents/Resources/BUILD-INFO.json` 提供源码快照和指纹。构建命令见 [构建文档](BUILDING.md)。
+Release：<https://github.com/Asher-XunZhang/codex-usage/releases/tag/v1.0.3>。同名 tag 保留 2026-09-18 首发源码，后续修复的重建请使用 Release 标注的编译提交或包内源码；包内 `source/` 与 `Contents/Resources/BUILD-INFO.json` 提供源码快照和指纹。构建命令见 [构建文档](BUILDING.md)。
 
-先定稿 ZIP，再单独更新安装助手固定 SHA-256；不会为回写自身摘要重打包。安装本版请使用 Release 独立 `install.sh`，ZIP 内源码的脚本可能仍对应上一发行版。旧版资产与 Windows 包不替换。
+先定稿 ZIP，再单独更新安装助手固定 SHA-256；不会为回写自身摘要重打包。安装本版请使用 Release 独立 `install.sh`，ZIP 内源码的脚本可能仍对应上一发行版。本次按用户要求替换 v1.0.3 的两个 macOS 包及校验文件，Windows 包不替换。
 
-## 最终 ZIP 校验
+## 首发 ZIP 校验（2026-09-18，已由修复包替换）
 
 | 架构 | 字节 | SHA-256 |
 | --- | ---: | --- |

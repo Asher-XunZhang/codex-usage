@@ -1,7 +1,95 @@
 import Foundation
+
+/// Serial request state shared by the helper and protocol regression tests.
+/// Only an authorization rejection triggers one managed token refresh.
+final class QuotaRequest {
+    private var expectedID = 1
+    private(set) var completed = false
+    var send: ([String: Any]) -> Void = { _ in }
+    var finish: ([String: Any]?, String?) -> Void = { _, _ in }
+
+    private func end(_ result: [String: Any]? = nil, error: String? = nil) {
+        guard !completed else { return }
+        completed = true; finish(result, error)
+    }
+    private func request(_ id: Int, _ method: String, params: [String: Any]? = nil) {
+        expectedID = id
+        var value: [String: Any] = ["id": id, "method": method]
+        if let params = params { value["params"] = params }
+        send(value)
+    }
+    private func unauthorized(_ error: [String: Any]) -> Bool {
+        if (error["code"] as? Int) == 401 { return true }
+        if let data = error["data"] as? [String: Any], (data["status"] as? Int) == 401 { return true }
+        let message = (error["message"] as? String ?? "").lowercased()
+        return message.range(of: #"\b401\b|\bunauthorized\b|\btoken_expired\b"#, options: .regularExpression) != nil
+    }
+    private func describe(_ error: [String: Any], refreshing: Bool = false) -> String {
+        // Never publish a raw server message: it may contain URLs or credentials.
+        let message = (error["message"] as? String ?? "").lowercased()
+        if (error["code"] as? Int) == -32601 || (error["code"] as? Int) == -32602 {
+            return "Codex 版本不兼容，请更新 Codex 后重试"
+        }
+        if ["timed out", "timeout", "deadline exceeded"].contains(where: message.contains) {
+            return "额度查询超时，请检查网络后重试"
+        }
+        if ["error sending request", "connection refused", "connection reset", "dns", "tls", "connect error", "network"].contains(where: message.contains) {
+            return "无法连接额度服务，请检查网络或代理后重试"
+        }
+        if unauthorized(error) || refreshing {
+            return "登录已失效，请在 Codex 中重新登录后重试"
+        }
+        if message.range(of: #"\b403\b|\bforbidden\b"#, options: .regularExpression) != nil {
+            return "账号无权读取额度，请检查 Codex 账号与订阅"
+        }
+        if message.contains("chatgpt") && ["auth", "login", "log in", "sign in"].contains(where: message.contains) {
+            return "请先在 Codex 中登录订阅账号后重试"
+        }
+        return "额度查询失败，请稍后重试或检查 Codex 连接"
+    }
+    func receive(_ value: [String: Any]) {
+        guard !completed, value["method"] == nil, let id = value["id"] as? Int, id == expectedID else { return }
+        if let error = value["error"] as? [String: Any] {
+            if id == 2 && unauthorized(error) {
+                request(3, "account/read", params: ["refreshToken": true])
+            } else { end(error: describe(error, refreshing: id == 3)) }
+            return
+        }
+        guard let raw = value["result"] as? [String: Any] else {
+            end(error: "Codex 返回的额度响应无效，请更新 Codex 后重试"); return
+        }
+        if id == 1 {
+            send(["method": "initialized"])
+            request(2, "account/rateLimits/read")
+        } else if id == 3 {
+            guard let account = raw["account"] as? [String: Any], account["type"] as? String == "chatgpt" else {
+                end(error: "登录已失效，请在 Codex 中重新登录后重试"); return
+            }
+            request(4, "account/rateLimits/read")
+        } else {
+            let buckets = raw["rateLimitsByLimitId"] as? [String: [String: Any]]
+            let bucket = buckets?["codex"] ?? raw["rateLimits"] as? [String: Any] ?? [:]
+            var windows: [[String: Any]] = []
+            for key in ["primary", "secondary"] {
+                guard let window = bucket[key] as? [String: Any], let used = window["usedPercent"] as? NSNumber,
+                      used.doubleValue.isFinite, let duration = window["windowDurationMins"] as? NSNumber,
+                      duration.intValue > 0 else { continue }
+                var entry: [String: Any] = ["used_percent": used, "duration_minutes": duration]
+                if let resets = window["resetsAt"] as? NSNumber { entry["resets_at"] = resets }
+                windows.append(entry)
+            }
+            var clean: [String: Any] = ["windows": windows, "updated_at": Date().timeIntervalSince1970]
+            if let credits = raw["rateLimitResetCredits"] as? [String: Any], let count = credits["availableCount"] as? NSNumber { clean["reset_count"] = count }
+            if windows.isEmpty { clean["error"] = "当前账号未返回订阅额度" }
+            end(clean)
+        }
+    }
+}
+
+// MARK: - Process entry point
 signal(SIGPIPE, SIG_IGN)
 
-// This process has a fixed read-only protocol. It has no reset redemption or model-turn operation.
+// Fixed quota protocol; token renewal is delegated to Codex. No model turns or reset redemption.
 let arguments = CommandLine.arguments
 func argument(_ name: String) -> String? { guard let i = arguments.firstIndex(of: name), i + 1 < arguments.count else { return nil }; return arguments[i+1] }
 guard let output = argument("--output"), let parentText = argument("--parent-pid"), let parent = Int32(parentText), parent > 1, getppid() == parent else { exit(2) }
@@ -38,6 +126,12 @@ child.standardInput = input; child.standardOutput = outputPipe; child.standardEr
 let semaphore = DispatchSemaphore(value: 0)
 let queue = DispatchQueue(label: "quota.readonly.protocol")
 var buffer = Data(), completed = false, result: [String: Any]?
+var failureMessage: String?
+let request = QuotaRequest()
+request.send = { send($0) }
+request.finish = { value, error in
+    result = value; failureMessage = error; completed = true; semaphore.signal()
+}
 func send(_ value: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: value) else { return }
     do { try input.fileHandleForWriting.write(contentsOf: data + Data([10])) } catch { semaphore.signal() }
@@ -48,30 +142,9 @@ func receive(_ data: Data) {
     guard buffer.count <= 1_048_576 else { completed = true; semaphore.signal(); return }
     while let end = buffer.firstIndex(of: 10) {
         let line = buffer.prefix(upTo: end); buffer.removeSubrange(...end)
-        guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any], value["method"] == nil, let id = value["id"] as? Int else { continue }
-        if id == 1 {
-            guard value["error"] == nil else { completed = true; semaphore.signal(); return }
-            send(["method": "initialized"])
-            send(["id": 2, "method": "account/rateLimits/read"])
-        } else if id == 2 {
-            if let raw = value["result"] as? [String: Any] {
-                let buckets = raw["rateLimitsByLimitId"] as? [String: [String: Any]]
-                let bucket = buckets?["codex"] ?? raw["rateLimits"] as? [String: Any] ?? [:]
-                var windows: [[String: Any]] = []
-                for key in ["primary", "secondary"] {
-                    guard let window = bucket[key] as? [String: Any], let used = window["usedPercent"] as? NSNumber,
-                          let duration = window["windowDurationMins"] as? NSNumber else { continue }
-                    var entry: [String: Any] = ["used_percent": used, "duration_minutes": duration]
-                    if let resets = window["resetsAt"] as? NSNumber { entry["resets_at"] = resets }
-                    windows.append(entry)
-                }
-                var clean: [String: Any] = ["windows": windows, "updated_at": Date().timeIntervalSince1970]
-                if let credits = raw["rateLimitResetCredits"] as? [String: Any], let count = credits["availableCount"] as? NSNumber { clean["reset_count"] = count }
-                if windows.isEmpty { clean["error"] = "当前账号未返回订阅额度" }
-                result = clean
-            }
-            completed = true; semaphore.signal(); return
-        }
+        guard let value = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+        request.receive(value)
+        if completed { return }
     }
 }
 outputPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -89,8 +162,10 @@ parentWatch.setEventHandler { if getppid() != parent { completed = true; semapho
 do {
     try child.run()
     send(["id": 1, "method": "initialize", "params": ["clientInfo": ["name": "codex_usage_readonly", "version": "1.0.0"], "capabilities": ["experimentalApi": true, "requestAttestation": false]]])
-    _ = semaphore.wait(timeout: .now() + 18)
-} catch {}
+    if semaphore.wait(timeout: .now() + 35) == .timedOut {
+        queue.sync { completed = true; failureMessage = "额度查询超时，请检查网络后重试" }
+    }
+} catch { failureMessage = "Codex 未能启动，请检查安装或更新 Codex" }
 outputPipe.fileHandleForReading.readabilityHandler = nil
 parentWatch.cancel(); termination.cancel(); interrupt.cancel()
 try? input.fileHandleForWriting.close()
@@ -100,9 +175,9 @@ if child.isRunning {
     if child.isRunning { kill(child.processIdentifier, SIGKILL) }
     child.waitUntilExit()
 }
-var final: [String: Any]?
-queue.sync { completed = true; final = result }
+var final: [String: Any]?, finalError: String?
+queue.sync { completed = true; final = result; finalError = failureMessage }
 if getppid() != parent { exit(1) }
 if let final = final { publish(final); exit(0) }
-failure("额度读取失败，请确认 Codex 已登录后重试")
+failure(finalError ?? "Codex 额度连接已中断，请重试或更新 Codex")
 exit(1)

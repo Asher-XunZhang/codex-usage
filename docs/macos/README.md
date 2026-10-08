@@ -2,9 +2,10 @@
 
 本目录描述 macOS 原生实现与相关发行流程；两端差异见 [Windows → macOS 对齐清单](../common/WINDOWS-MACOS-ALIGNMENT.md)。
 
-当前 macOS 版本为 **v1.0.3**（Apple Silicon / Intel），新增单窗口弧线调色和微弧融合贴边轮廓，修复预览偏移及无任务时的侧签留白。延续预算提醒、任务监控、统一设置与菜单栏详情。
+当前 macOS 版本为 **v1.0.4**（Apple Silicon / Intel），修复认证失效后额度无法同步的问题，增加一次凭据恢复重试与具体错误提示。延续既有浮窗配色、预算提醒、任务监控与设置功能。
 
-- [v1.0.3 发行说明与验证边界](RELEASE-1.0.3.md)
+- [v1.0.4 发行说明与验证边界](RELEASE-1.0.4.md)
+- [v1.0.3 历史发行说明与验证边界](RELEASE-1.0.3.md)
 - [新版视图与交互图解](FLOATING-1.0.3.md)
 - [安装与 Intel 排障](INSTALL.md)
 - [构建与发布](BUILDING.md)

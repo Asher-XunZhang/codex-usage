@@ -1,12 +1,12 @@
 # 验证与兼容性
 
-当前正式下载为 **Windows v1.0.3 与 macOS v1.0.3**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
+当前正式下载为 **Windows v1.0.3 与 macOS v1.0.4**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
 
-## macOS v1.0.3 的验证边界
+## macOS v1.0.4 的验证边界
 
-v1.0.3 在 Apple Silicon 上执行完整回归，并分别构建 arm64、x86_64 包，验证架构、嵌套签名、固定运行时与源码摘要。已在本地安装版操作贴边、拖动、展开和收起；四边、多显示器接缝与任务状态切换另有原生自动化验证。图片来自实际 AppKit 绘制与合成数据，不是桌面录屏。
+本版验证认证拒绝后的凭据恢复、一次重试上限、刷新凭据失效、网络失败、旧快照保留及成功恢复。测试使用虚构凭据与本地模拟服务，不操作真实账号。
 
-Intel 包在 Apple Silicon 的 Rosetta 环境检查运行组件，尚未进行实体 Intel 验收。系统通知冷启动、完整拔屏／Spaces／休眠及干净设备首次下载信任流程也不能视为本次已通过。详见 [v1.0.3 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.md)。
+分别构建 arm64、x86_64 包，发行验收核对架构、签名、固定运行时、源码摘要与离线组件启动。Intel 包在 Apple Silicon 的 Rosetta 环境执行，尚未进行实体 Intel 验收；不能保证用户现场的故障与模拟场景完全相同。系统通知冷启动、完整拔屏／Spaces／休眠及干净设备首次下载信任流程未在本版重新验收。详见 [v1.0.4 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.4.md)。
 
 ## Windows v1.0.3 的验证边界
 
@@ -26,7 +26,7 @@ Windows 开发与交互验证在 Windows 11 x64 上进行。v1.0.3 增加弧线�
 
 ## macOS 已发布版本与历史记录
 
-macOS 下载已更新为 v1.0.3。下方保留 v1.0.0、v1.0.1 及安装助手开发阶段记录；结果只适用于注明的版本与环境，不替代新包验证。旧版打包记录见[固定版本文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
+macOS 下载已更新为 v1.0.4。下方保留 v1.0.0、v1.0.1 及安装助手开发阶段记录；结果只适用于注明的版本与环境，不替代新包验证。旧版打包记录见[固定版本文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
 
 ## v1.0.0 正式发行记录
 

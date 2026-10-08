@@ -116,4 +116,4 @@ pnpm check
 
 [平台支持与差异](./platforms.md) · [验证与兼容性](./validation.md) · [当前版本记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/CHANGELOG.md)
 
-macOS v1.0.4 可从同名 tag 或 ZIP 的 source/ 重建。安装助手在 ZIP 定稿后单独固定摘要；以 Release 资产中的 install.sh 为准。
+macOS v1.0.3.post2 可从同名 tag 或 ZIP 的 source/ 重建。安装助手在 ZIP 定稿后单独固定摘要；以 Release 资产中的 install.sh 为准。

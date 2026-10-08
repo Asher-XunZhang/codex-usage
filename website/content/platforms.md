@@ -1,13 +1,13 @@
 ---
 title: 平台支持与功能差异
-description: 对比 Windows v1.0.3 与 macOS v1.0.4 的功能、安装包与验证边界。
+description: 对比 Windows v1.0.3 与 macOS v1.0.3.post2 的功能、安装包与验证边界。
 ---
 
 # 平台支持与功能差异
 
-**macOS v1.0.4 提供 Apple Silicon 和 Intel 包，Windows 当前为 v1.0.3。** 更新 App 后才能获得对应的新功能。
+**macOS v1.0.3.post2 提供 Apple Silicon 和 Intel 包，Windows 当前为 v1.0.3。** 更新 App 后才能获得对应的新功能。
 
-| 能力 | Windows v1.0.3 | macOS v1.0.4 |
+| 能力 | Windows v1.0.3 | macOS v1.0.3.post2 |
 | --- | --- | --- |
 | 原生界面 | WPF 主面板、系统托盘与浮窗 | AppKit 主面板、菜单栏与浮窗 |
 | Token、趋势、模型／任务筛选、导出 | 支持 | 支持 |
@@ -37,6 +37,6 @@ description: 对比 Windows v1.0.3 与 macOS v1.0.4 的功能、安装包与验�
 
 ## 源码来源
 
-macOS v1.0.4 使用同名源码标签；Windows v1.0.3 的源码提交由原发行页单独标注，并随 Windows ZIP 的 `source/` 提供，`BUILD-MANIFEST.json` 记录源码哈希。macOS 包内 `source/` 与 App 的 `Contents/Resources/BUILD-INFO.json` 可核对编译提交和源码摘要。安装器在 ZIP 定稿后独立固定摘要。旧版 v1.0.2 标签与 Windows 资产保持不变。
+macOS v1.0.3.post2 使用同名源码标签；Windows v1.0.3 的源码提交由原发行页单独标注，并随 Windows ZIP 的 `source/` 提供，`BUILD-MANIFEST.json` 记录源码哈希。macOS 包内 `source/` 与 App 的 `Contents/Resources/BUILD-INFO.json` 可核对编译提交和源码摘要。安装器在 ZIP 定稿后独立固定摘要。旧版 v1.0.2 标签与 Windows 资产保持不变。
 
 [开发与发布](./development.md) · [两端对齐清单](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/common/WINDOWS-MACOS-ALIGNMENT.md)

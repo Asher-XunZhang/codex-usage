@@ -1967,7 +1967,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func showSupport() { NSWorkspace.shared.open(backend.root) }
     @objc func about() {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知版本"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CodexUsageReleaseVersion") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知版本"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
         let provenance = (try? Data(contentsOf: usageResourcesURL.appendingPathComponent("BUILD-INFO.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? Object }
         let revision = String((provenance?["revision"] as? String ?? "未知源码").prefix(12)) + (provenance?["dirty"] as? Bool == true ? " + 工作区修改" : "")

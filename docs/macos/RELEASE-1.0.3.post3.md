@@ -1,0 +1,27 @@
+# macOS v1.0.3.post3：修复 Codex 程序查找
+
+本版修复已安装新版 Codex 桌面应用时，额度查询仍提示“未找到 Codex”，反复刷新无效的问题。基础版本保持 **1.0.3**，修订号 **post3**，构建号 **105**；发布 Apple Silicon 与 Intel 两个包，Windows 保持 v1.0.3。
+
+## 原因与行为
+
+- Codex 桌面应用的内置程序已使用 `Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`。此前仅检查旧布局及固定的独立 CLI 路径；没有独立 CLI 的机器可能无法查询额度，有独立旧 CLI 的机器则可能错误地继续使用旧程序。
+- 同时识别 `/Applications` 和 `~/Applications` 中 ChatGPT.app / Codex.app 的新旧布局，保留 `.local/bin`、Homebrew 及 `/usr/local/bin` 的独立 CLI 回退。
+- 浮窗显示额度查询中的状态和具体错误；本地日志完成不会提前显示额度刷新成功。错误时允许重试，旧数值保留并标记。
+- 空额度响应按失败处理，不清空原数值或更新成功时间。已有旧值时，主面板及菜单详情也显示失败原因。
+- 保留 post2 的 401 凭据恢复与一次重试限制，不修改认证文件，不发送模型请求或使用重置卡。
+
+## 验证与边界
+
+远端 M5 Pro 和 Intel 均返回“未找到 Codex”，确认两台失败都发生在额度请求之前。两台均确认程序位于 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，与本版新增路径一致；升级后的现场恢复结果仍待确认。
+
+额度协议、路径查找、真实宿主状态绑定、浮窗离屏交互、窗口刷新桥接及更新设置 29 项专项通过。通用构建及严格递归签名检查通过；候选采集器在本机分别以 arm64、x86_64（Rosetta）运行，通过 Codex CLI 0.162.0-alpha.2 取得新额度快照。x86_64 采集器调用本机 arm64 CLI，不等于实体 Intel 端到端验收。现场升级验证与实际鼠标操作不能由离屏测试替代。
+
+全量回归 422 项：367 通过、55 按平台跳过。两个发行包各 412 个文件通过逐文件清单、源码指纹、架构、运行时与签名校验。最终资产摘要及解包验证结果见 Release。ZIP 的 `BUILD-INFO.json` 记录编译提交及源码摘要。
+
+## 安装
+
+完整退出旧版，解压并替换 `Codex用量.app`，保留原配置与记录。在“关于”中确认 **1.0.3.post3**，再点击刷新。若仍失败，在“设置 → 数据与更新”查看具体原因。
+
+最低构建目标 macOS 11，使用现有 ad hoc 签名、未经过 Apple 公证。独立安装助手在两个 ZIP 定稿后固定 SHA-256；ZIP 内源码保留构建时的旧安装助手，安装本版请使用 Release 独立的 `install.sh`。既有发布包、标签和校验值保留。
+
+[安装指南](INSTALL.md) · [构建流程](BUILDING.md) · [更新记录](../../CHANGELOG.md)

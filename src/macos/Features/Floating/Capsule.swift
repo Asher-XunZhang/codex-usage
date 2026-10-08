@@ -122,12 +122,21 @@ final class CapsuleState {
     var quotaFraction: Double? { didSet { changed?() } }
     var quotaName = "剩余额度" { didSet { changed?() } }
     var quotaStale = false { didSet { changed?() } }
+    var quotaRefreshing = false { didSet { changed?() } }
+    var quotaFailed = false { didSet { changed?() } }
     var theme: CapsuleTheme = .dark { didSet { changed?() } }
     var arcStyle = CapsuleArcStyle() { didSet { changed?() } }
     var arcStylePreview: CapsuleArcStyle? { didSet { changed?() } }
     var monitorRows: [(id: String, title: String, status: String, active: Bool)] = [] { didSet { changed?() } }
     var monitorChecking = false { didSet { changed?() } }
-    var canRefresh: Bool { monitorMode ? !monitorChecking : enabled }
+    var canRefresh: Bool { monitorMode ? !monitorChecking : enabled && (budgetMode || !quotaRefreshing) }
+    var refreshIndicator: String {
+        if !monitorMode && !budgetMode {
+            if quotaRefreshing { return "busy" }
+            if quotaFailed && indicator == "check" { return "refresh" }
+        }
+        return indicator
+    }
     var monitorSummary = "任务监控" { didSet { changed?() } }
     var monitorUnread = 0 { didSet { changed?() } }
     var edgeShowsUsed = false { didSet { changed?() } }
@@ -992,7 +1001,7 @@ final class CapsuleSurface: NSView {
         let availableDigits = max(30, bounds.width * 0.43 - tokenUnitWidth - 2)
         let tokenWidth = min(width(tokenDigits, tokenSize, mono: true) + 1, availableDigits)
         let tokenX = bounds.width - inset - tokenWidth - tokenUnitWidth - (hasUnit ? 2 : 0)
-        let caption = state.indicator == "busy" ? "更新" : state.displayScope
+        let caption = state.refreshIndicator == "busy" ? "更新" : state.displayScope
         let captionWidth = width(caption, labelSize) + 2
         let captionX = tokenX - captionWidth - 6
         drawHeader(shortName, x: quotaLabelX, width: max(0, captionX - quotaLabelX - 10), size: labelSize, color: secondary)
@@ -1135,7 +1144,7 @@ final class CapsuleSurface: NSView {
             NSBezierPath(rect: bodyViewport).addClip()
             let scrollTransform = NSAffineTransform(); scrollTransform.translateX(by: -contentOffset.x, yBy: -contentOffset.y); scrollTransform.concat()
             if copyField == nil { text(state.monitorMode ? "监控状态来自明确的轮次事件" : state.budgetMode ? "预算范围独立 · 点击周期可编辑" : state.exact, NSRect(x: 48, y: 57, width: max(0, bodyWidth - 132), height: 16), size: 10, color: secondary, mono: true) }
-            let symbol = state.monitorMode ? (state.monitorChecking ? "…" : "↻") : state.indicator == "busy" ? "…" : (state.indicator == "check" ? "✓" : "↻")
+            let symbol = state.monitorMode ? (state.monitorChecking ? "…" : "↻") : state.refreshIndicator == "busy" ? "…" : (state.refreshIndicator == "check" ? "✓" : "↻")
             buttonBackground("refresh", NSRect(x: 16, y: 53, width: 26, height: 24))
             text(symbol, NSRect(x: 19, y: 52, width: 22, height: 25), size: 18, color: state.canRefresh ? mint : secondary)
             buttonBackground("content", NSRect(x: 16, y: 78, width: 70, height: 24), base: ink.withAlphaComponent(0.065))

@@ -1,12 +1,12 @@
 # 验证与兼容性
 
-当前正式下载为 **Windows v1.0.3 与 macOS v1.0.3.post2**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
+当前正式下载为 **Windows v1.0.3 与 macOS v1.0.3.post3**。不同检查证明不同范围：构建和离屏图不能替代系统通知与真实鼠标操作；macOS 签名完整性不等于 Apple 公证，Rosetta 执行不等于所有实体 Intel Mac 通过。
 
-## macOS v1.0.3.post2 的验证边界
+## macOS v1.0.3.post3 的验证边界
 
-本版验证认证拒绝后的凭据恢复、一次重试上限、刷新凭据失效、网络失败、旧快照保留及成功恢复。测试使用虚构凭据与本地模拟服务，不操作真实账号。
+本版验证新旧桌面 Codex 程序路径、独立 CLI 回退、空响应保留旧快照，以及额度刷新等待、错误显示和重试恢复。沿用认证拒绝后最多恢复一次的限制。
 
-分别构建 arm64、x86_64 包，发行验收核对架构、签名、固定运行时、源码摘要与离线组件启动。Intel 包在 Apple Silicon 的 Rosetta 环境执行，尚未进行实体 Intel 验收；不能保证用户现场的故障与模拟场景完全相同。系统通知冷启动、完整拔屏／Spaces／休眠及干净设备首次下载信任流程未在本版重新验收。详见 [v1.0.3.post2 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.post2.md)。
+两种架构均构建和校验。当前 Apple Silicon 机器以 arm64 和 x86_64（Rosetta）运行候选采集器，通过新版 Codex CLI 读取到新额度。Rosetta 不等于实体 Intel 验收。远端 M5 Pro 和 Intel 均确认“未找到 Codex”，两台实际安装路径均与本版新增的新版 Codex 路径一致；升级后结果尚待确认。详见 [v1.0.3.post3 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.post3.md)。
 
 ## Windows v1.0.3 的验证边界
 
@@ -26,7 +26,7 @@ Windows 开发与交互验证在 Windows 11 x64 上进行。v1.0.3 增加弧线�
 
 ## macOS 已发布版本与历史记录
 
-macOS 下载已更新为 v1.0.3.post2。下方保留 v1.0.0、v1.0.1 及安装助手开发阶段记录；结果只适用于注明的版本与环境，不替代新包验证。旧版打包记录见[固定版本文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
+macOS 下载已更新为 v1.0.3.post3。下方保留 v1.0.0、v1.0.1 及安装助手开发阶段记录；结果只适用于注明的版本与环境，不替代新包验证。旧版打包记录见[固定版本文档](https://github.com/Asher-XunZhang/codex-usage/blob/v1.0.1/docs/VALIDATION.md)。
 
 ## v1.0.0 正式发行记录
 

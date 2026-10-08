@@ -4,9 +4,9 @@
 
 usage() {
     cat <<'EOF'
-Codex 用量快捷安装（固定 v1.0.3.post2）
+Codex 用量快捷安装（固定 v1.0.3.post3）
 用法：/bin/bash scripts/install.sh [选项]
-  --archive ZIP       使用已经下载的官方 v1.0.3.post2 ZIP，仍校验固定 SHA-256
+  --archive ZIP       使用已经下载的官方 v1.0.3.post3 ZIP，仍校验固定 SHA-256
   --destination DIR   安装目录，须为绝对路径；默认 ~/Applications
   --no-open           安装后不启动 App
   --help              显示帮助
@@ -29,15 +29,15 @@ select_release() {
     case "$architecture" in
         arm64)
             label=AppleSilicon
-            expected_sha=31939be2fa5a3d215eda5bb93c71166e24bac38f23cb5598172dd737b8b27e76
+            expected_sha=d81fb24c93e71005c3aadff7cb883c91e7bea4b4f8e7ada5d2abb6ecb2c1eea5
             ;;
         x86_64)
             label=Intel
-            expected_sha=6a1e08f607379c45ef250393fe64d5dc4c712c5397d0ea75683b2d1194be7a09
+            expected_sha=4b6944e44889c642837e33717052ba2327e386b8386aa64d050556968accb5a3
             ;;
         *) fail "不支持的芯片架构：$architecture" ;;
     esac
-    version=1.0.3.post2
+    version=1.0.3.post3
     filename="codex-usage-desktop-v${version}-${label}.zip"
     release_url="https://github.com/Asher-XunZhang/codex-usage/releases/download/v${version}/${filename}"
 }
@@ -72,7 +72,7 @@ verify_bundle() {
     value=$(/usr/libexec/PlistBuddy -c 'Print :CodexUsageReleaseVersion' "$info") || fail '无法读取 App 修订号。'
     [[ "$value" == "$version" ]] || fail 'App 修订号不符。'
     value=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info") || fail '无法读取 App 构建号。'
-    [[ "$value" == 104 ]] || fail 'App 构建号不符。'
+    [[ "$value" == 105 ]] || fail 'App 构建号不符。'
     for binary in \
         "$app/Contents/MacOS/CodexUsage" \
         "$app/Contents/MacOS/CodexSummary" \

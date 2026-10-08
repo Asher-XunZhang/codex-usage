@@ -22,6 +22,11 @@ precondition(result.capsuleCompact=="周余 20%")
 precondition(result.capsuleWindow?.label=="周" && result.capsuleWindow?.remaining==20, "Liquid level must use the same limiting window as the displayed quota")
 precondition(result.resetLabel=="重置卡 3 张")
 precondition(!result.stale)
+let failed=QuotaSnapshot.parse(["updated_at":fresh,"windows":[["used_percent":80,"duration_minutes":10080]],"error":"无法连接额度服务，请检查网络或代理后重试"])
+precondition(failed.detail.contains("无法连接") && failed.detail.contains("上次记录"))
+precondition(failed.capsuleDetail(refreshing:false, enabled:true).contains("无法连接"), "Floating quota must expose the actual error even with cached values")
+precondition(failed.capsuleDetail(refreshing:true, enabled:true)=="正在刷新账号额度…")
+precondition(failed.capsuleDetail(refreshing:false, enabled:false)=="账号额度查询已关闭")
 let missing=QuotaSnapshot.parse([:])
 precondition(missing.windows.isEmpty && missing.resetCount==nil && missing.compact=="额度 —")
 precondition(missing.capsuleWindow==nil, "Missing quota must not appear as empty quota")
@@ -161,6 +166,14 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
         self.assertEqual(r['completions'], 1)
         self.assertIsNone(r['error'])
 
+    def test_empty_windows_are_failure_not_a_successful_empty_snapshot(self):
+        for raw in [{}, {'rateLimits': {'primary': None, 'secondary': None}},
+                    {'rateLimits': {'primary': {'usedPercent': 2, 'windowDurationMins': 0}}}]:
+            with self.subTest(raw=raw):
+                r = self.exchange(self.reply(1, {}), self.reply(2, raw))
+                self.assertIsNone(r['result'])
+                self.assertIn('未返回订阅额度', r['error'])
+
     def test_malformed_response_preserves_failure_semantics(self):
         r = self.exchange(self.reply(1, {}), dict(id=2))
         self.assertIsNone(r['result'])
@@ -206,3 +219,22 @@ while !stopped { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
             subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(main), str(macos_source('Quota.swift')),
                             '-o', str(binary)], check=True, capture_output=True, text=True, timeout=90)
             subprocess.run([str(binary), str(root)], check=True, capture_output=True, text=True, timeout=25)
+
+    def test_current_and_legacy_desktop_cli_locations(self):
+        root = Path(self.temporary.name)
+        source = macos_source('QuotaHelper.swift').read_text().split('/// Serial request state')[0]
+        main = root / 'locator.swift'
+        main.write_text(source + r'''
+let paths = QuotaExecutable.candidates(home: URL(fileURLWithPath: "/test-home"))
+let desktop = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"
+let legacy = "/Applications/ChatGPT.app/Contents/Resources/codex"
+let fallback = "/test-home/.local/bin/codex"
+precondition(paths.first(where: Set([desktop, legacy, fallback]).contains) == desktop)
+precondition(paths.first(where: Set([legacy, fallback]).contains) == legacy)
+precondition(paths.first(where: Set([fallback]).contains) == fallback)
+precondition(paths.contains("/test-home/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"))
+precondition(paths.contains("/usr/local/bin/codex"))
+''')
+        binary = root / 'locator'
+        subprocess.run(['xcrun', 'swiftc', str(main), '-o', str(binary)], check=True, capture_output=True, text=True, timeout=90)
+        subprocess.run([str(binary)], check=True, capture_output=True, text=True, timeout=10)

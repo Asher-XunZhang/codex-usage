@@ -277,6 +277,23 @@ case "menus":
     f.surface.menuTrackingOverride = { _, _ in menus += 1; check(f.pixels() == normal, "Context menu also clears pointer feedback") }
     f.move(mainButton); f.surface.rightMouseDown(with: f.event(.rightMouseDown, mainButton))
     check(menus == 2 && f.actions.count == 1 && f.pixels() == normal, "Cancelling right-click menu does not perform a left-click action")
+case "quota-refresh":
+    let f = Fixture(); defer { f.dispose() }
+    let button = NSPoint(x: 29, y: 65)
+    f.state.quotaRefreshing = true; f.state.indicator = "check"
+    check(!f.state.canRefresh && f.state.refreshIndicator == "busy", "Local completion cannot complete an in-flight quota request")
+    f.down(button); f.up(button)
+    check(f.actions.isEmpty, "Expanded refresh cannot dispatch duplicate in-flight quota requests")
+    f.state.quotaRefreshing = false; f.state.quotaFailed = true
+    f.state.quotaDetail = "登录已失效，请在 Codex 中重新登录后重试"
+    check(f.state.canRefresh && f.state.refreshIndicator != "check", "Quota failure must permit retry without a misleading success check")
+    check((f.surface.accessibilityValue() as? String)?.contains("重新登录") == true, "Expanded floating view exposes the quota failure")
+    f.down(button); f.up(button)
+    check(f.actions == ["refresh"], "Retry dispatches exactly once after quota failure")
+    f.state.quotaFailed = false; f.state.quotaFraction = 0.42
+    check(f.state.normalizedQuota == 0.42 && f.state.refreshIndicator == "check", "Successful retry restores a known value")
+    f.state.monitorMode = true; f.state.quotaRefreshing = true
+    check(f.state.canRefresh, "Quota activity cannot block independent task monitoring")
 case "lifecycle":
     let f = Fixture(); defer { f.dispose() }
     let normal = f.pixels()
@@ -334,3 +351,6 @@ print(CommandLine.arguments[1] + " passed")
 
     def test_collapse_mode_change_cancel_and_repeated_themes_clear_feedback(self):
         self.run_case("lifecycle")
+
+    def test_quota_refresh_pending_failure_and_retry_in_expanded_capsule(self):
+        self.run_case("quota-refresh")

@@ -2,9 +2,9 @@
 
 本目录描述 macOS 原生实现与相关发行流程；两端差异见 [Windows → macOS 对齐清单](../common/WINDOWS-MACOS-ALIGNMENT.md)。
 
-当前 macOS 版本为 **v1.0.3.post2**（Apple Silicon / Intel），修复认证失效后额度无法同步的问题，增加一次凭据恢复重试与具体错误提示。延续既有浮窗配色、预算提醒、任务监控与设置功能。
+当前 macOS 版本为 **v1.0.3.post3**（Apple Silicon / Intel），修复新版 Codex 程序未被识别导致额度无法刷新，并补全查询状态与错误提示。延续既有浮窗配色、预算提醒、任务监控与设置功能。
 
-- [v1.0.3.post2 发行说明与验证边界](RELEASE-1.0.3.post2.md)
+- [v1.0.3.post3 发行说明与验证边界](RELEASE-1.0.3.post3.md)
 - [v1.0.3 历史发行说明与验证边界](RELEASE-1.0.3.md)
 - [新版视图与交互图解](FLOATING-1.0.3.md)
 - [安装与 Intel 排障](INSTALL.md)

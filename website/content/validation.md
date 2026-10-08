@@ -6,7 +6,7 @@
 
 本版验证新旧桌面 Codex 程序路径、独立 CLI 回退、空响应保留旧快照，以及额度刷新等待、错误显示和重试恢复。沿用认证拒绝后最多恢复一次的限制。
 
-两种架构均构建和校验。当前 Apple Silicon 机器以 arm64 和 x86_64（Rosetta）运行候选采集器，通过新版 Codex CLI 读取到新额度。Rosetta 不等于实体 Intel 验收。已收到另一台 M5 Pro 的“未找到 Codex”错误截图，尚未取得其升级后结果；另有 Intel 用户反馈仍在等待诊断结果。详见 [v1.0.3.post3 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.post3.md)。
+两种架构均构建和校验。当前 Apple Silicon 机器以 arm64 和 x86_64（Rosetta）运行候选采集器，通过新版 Codex CLI 读取到新额度。Rosetta 不等于实体 Intel 验收。远端 M5 Pro 和 Intel 均确认“未找到 Codex”，实际安装路径与升级后结果尚待核对。详见 [v1.0.3.post3 发行记录](https://github.com/Asher-XunZhang/codex-usage/blob/main/docs/macos/RELEASE-1.0.3.post3.md)。
 
 ## Windows v1.0.3 的验证边界
 

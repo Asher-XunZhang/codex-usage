@@ -12,7 +12,7 @@
 
 ## 验证与边界
 
-远端 M5 Pro 和 Intel 均返回“未找到 Codex”，确认两台失败都发生在额度请求之前。现场实际安装路径及升级后的恢复结果仍待核对，不能用本机成功代替现场验证。
+远端 M5 Pro 和 Intel 均返回“未找到 Codex”，确认两台失败都发生在额度请求之前。两台均确认程序位于 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`，与本版新增路径一致；升级后的现场恢复结果仍待确认。
 
 额度协议、路径查找、真实宿主状态绑定、浮窗离屏交互、窗口刷新桥接及更新设置 29 项专项通过。通用构建及严格递归签名检查通过；候选采集器在本机分别以 arm64、x86_64（Rosetta）运行，通过 Codex CLI 0.162.0-alpha.2 取得新额度快照。x86_64 采集器调用本机 arm64 CLI，不等于实体 Intel 端到端验收。现场升级验证与实际鼠标操作不能由离屏测试替代。
 

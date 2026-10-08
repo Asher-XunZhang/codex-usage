@@ -100,7 +100,9 @@ final class QuotaReader {
                 guard let self = self, ticket == self.generation else { return }
                 self.child = nil; self.deadline?.cancel(); self.deadline = nil
                 self.loadCache()
-                if finished.terminationStatus != 0 { self.snapshot.error = "额度暂不可用"; self.changed?(self.snapshot) }
+                if finished.terminationStatus != 0, self.snapshot.error == nil {
+                    self.snapshot.error = "额度暂不可用，请重试"; self.changed?(self.snapshot)
+                }
                 self.schedule()
             }
         }
@@ -110,7 +112,7 @@ final class QuotaReader {
                 guard let self = self, ticket == self.generation, worker?.isRunning == true else { return }
                 worker?.terminate()
             }
-            deadline = timeout; DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: timeout)
+            deadline = timeout; DispatchQueue.main.asyncAfter(deadline: .now() + 45, execute: timeout)
         } catch {
             child = nil; snapshot.error = "额度读取组件未能启动"; changed?(snapshot); schedule()
         }

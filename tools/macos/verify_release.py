@@ -15,7 +15,7 @@ import zipfile
 
 from tools.common.paths import ROOT
 from tools.common.distribution import DOCUMENTS, METADATA_FILES, check_path, documentation_files, source_files
-from tools.macos.package import RELEASES, VERSION, release_readme
+from tools.macos.package import RELEASES, VERSION, APP_VERSION, BUILD_VERSION, release_readme
 from tools.common.downloads import digest_file, verify_runtime
 from tools.macos.fetch_runtime import load_manifest, selected_entries
 
@@ -67,7 +67,7 @@ def verify_app(root, arch):
     contents = app / 'Contents'
     resources = contents / 'Resources'
     info = plistlib.loads((contents / 'Info.plist').read_bytes())
-    require(info['CFBundleShortVersionString'] == VERSION, 'Unexpected app version')
+    require(info['CFBundleShortVersionString'] == APP_VERSION, 'Unexpected app version')
     require(info['CFBundleIdentifier'] == 'local.codex-usage.desktop', 'Unexpected app bundle identifier')
     require(info['CFBundleExecutable'] == 'CodexUsage', 'Unexpected app executable')
     require(info['LSMinimumSystemVersion'] == '11.0', 'Unexpected macOS deployment target')
@@ -77,7 +77,7 @@ def verify_app(root, arch):
     helper_contents = helper / 'Contents'
     helper_info = plistlib.loads((helper_contents / 'Info.plist').read_bytes())
     require(helper_info['CFBundleIdentifier'] == 'local.codex-usage.desktop.main', 'Unexpected Main helper identifier')
-    require(helper_info['CFBundleExecutable'] == 'CodexUsage' and helper_info['CFBundleShortVersionString'] == VERSION,
+    require(helper_info['CFBundleExecutable'] == 'CodexUsage' and helper_info['CFBundleShortVersionString'] == APP_VERSION,
             'Unexpected Main helper executable/version')
     require({p.name for p in (helper_contents / 'MacOS').iterdir()} == {'CodexUsage'}, 'Unexpected Main helper executables')
     require({p.name for p in (helper_contents / 'Resources').iterdir()} == {'AppIcon.icns'}, 'Main helper must share host resources')
@@ -85,6 +85,9 @@ def verify_app(root, arch):
         require(os.access(binary, os.X_OK), f'Executable permission lost: {binary}')
         found = subprocess.check_output(['lipo', '-archs', str(binary)], text=True).strip().split()
         require(found == [arch], f'Unexpected architecture for {binary}: {found}')
+    for metadata in (info, helper_info):
+        require(metadata.get('CodexUsageReleaseVersion') == VERSION, 'Unexpected release revision')
+        require(metadata['CFBundleVersion'] == BUILD_VERSION, 'Unexpected app build number')
     require(digest_file(resources / 'AppIcon.icns') == digest_file(helper_contents / 'Resources/AppIcon.icns'),
             'Host and Main helper icons differ')
     for signed in (helper, app):

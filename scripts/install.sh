@@ -4,9 +4,9 @@
 
 usage() {
     cat <<'EOF'
-Codex 用量快捷安装（固定 v1.0.3）
+Codex 用量快捷安装（固定 v1.0.3.post2）
 用法：/bin/bash scripts/install.sh [选项]
-  --archive ZIP       使用已经下载的官方 v1.0.3 ZIP，仍校验固定 SHA-256
+  --archive ZIP       使用已经下载的官方 v1.0.3.post2 ZIP，仍校验固定 SHA-256
   --destination DIR   安装目录，须为绝对路径；默认 ~/Applications
   --no-open           安装后不启动 App
   --help              显示帮助
@@ -29,15 +29,15 @@ select_release() {
     case "$architecture" in
         arm64)
             label=AppleSilicon
-            expected_sha=1417da86c5b623a1f9e76a36ec2d2dbf38bcf96ade5ded4cd1a130e8bf959fad
+            expected_sha=31939be2fa5a3d215eda5bb93c71166e24bac38f23cb5598172dd737b8b27e76
             ;;
         x86_64)
             label=Intel
-            expected_sha=9a617774613eec737ca391c9967d987abeb27ed24a075ebb8a4a8b02def3d899
+            expected_sha=6a1e08f607379c45ef250393fe64d5dc4c712c5397d0ea75683b2d1194be7a09
             ;;
         *) fail "不支持的芯片架构：$architecture" ;;
     esac
-    version=1.0.3
+    version=1.0.3.post2
     filename="codex-usage-desktop-v${version}-${label}.zip"
     release_url="https://github.com/Asher-XunZhang/codex-usage/releases/download/v${version}/${filename}"
 }
@@ -68,7 +68,11 @@ verify_bundle() {
     value=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info") || fail '无法读取 App 信息。'
     [[ "$value" == local.codex-usage.desktop ]] || fail 'App 标识不符。'
     value=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info") || fail '无法读取 App 版本。'
-    [[ "$value" == "$version" ]] || fail 'App 版本不符。'
+    [[ "$value" == "${version%%.post*}" ]] || fail 'App 基础版本不符。'
+    value=$(/usr/libexec/PlistBuddy -c 'Print :CodexUsageReleaseVersion' "$info") || fail '无法读取 App 修订号。'
+    [[ "$value" == "$version" ]] || fail 'App 修订号不符。'
+    value=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info") || fail '无法读取 App 构建号。'
+    [[ "$value" == 104 ]] || fail 'App 构建号不符。'
     for binary in \
         "$app/Contents/MacOS/CodexUsage" \
         "$app/Contents/MacOS/CodexSummary" \

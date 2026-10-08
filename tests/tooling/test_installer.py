@@ -39,11 +39,11 @@ printf '%s\\n' "$architecture" "$label" "$expected_sha" "$release_url"
     def test_selects_pinned_release_for_intel_native_arm_and_rosetta(self):
         for hardware, reported, architecture, label, digest in [
             ('0', 'x86_64', 'x86_64', 'Intel',
-             '6a1e08f607379c45ef250393fe64d5dc4c712c5397d0ea75683b2d1194be7a09'),
+             '4b6944e44889c642837e33717052ba2327e386b8386aa64d050556968accb5a3'),
             ('1', 'arm64', 'arm64', 'AppleSilicon',
-             '31939be2fa5a3d215eda5bb93c71166e24bac38f23cb5598172dd737b8b27e76'),
+             'd81fb24c93e71005c3aadff7cb883c91e7bea4b4f8e7ada5d2abb6ecb2c1eea5'),
             ('1', 'x86_64', 'arm64', 'AppleSilicon',
-             '31939be2fa5a3d215eda5bb93c71166e24bac38f23cb5598172dd737b8b27e76'),
+             'd81fb24c93e71005c3aadff7cb883c91e7bea4b4f8e7ada5d2abb6ecb2c1eea5'),
         ]:
             with self.subTest(hardware=hardware, reported=reported):
                 result = self.selection(hardware, reported)
@@ -51,7 +51,7 @@ printf '%s\\n' "$architecture" "$label" "$expected_sha" "$release_url"
                 self.assertEqual(result.stdout.splitlines(), [
                     architecture, label, digest,
                     'https://github.com/Asher-XunZhang/codex-usage/releases/'
-                    f'download/v1.0.3.post2/codex-usage-desktop-v1.0.3.post2-{label}.zip',
+                    f'download/v1.0.3.post3/codex-usage-desktop-v1.0.3.post3-{label}.zip',
                 ])
 
     def test_intel_without_optional_arm64_key_uses_uname(self):
@@ -82,7 +82,7 @@ class InstallerTransactionTests(unittest.TestCase):
         self.target = self.destination / APP_NAME
         self.trace = self.directory / 'trace.txt'
         self.archive = self.directory / 'release with spaces.zip'
-        source = self.directory / 'source' / 'Codex用量-1.0.3.post2-Intel'
+        source = self.directory / 'source' / 'Codex用量-1.0.3.post3-Intel'
         self.fixture_app = source / APP_NAME
         self.payload = self.fixture_app / 'Contents' / 'payload.txt'
         self.payload.parent.mkdir(parents=True)

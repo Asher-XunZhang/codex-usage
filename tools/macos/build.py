@@ -130,8 +130,8 @@ def main(argv=None, *, legacy=False):
     info = {
         'CFBundleName': 'Codex 用量', 'CFBundleDisplayName': 'Codex 用量',
         'CFBundleExecutable': 'CodexUsage', 'CFBundleIdentifier': 'local.codex-usage.desktop',
-        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.3', 'CFBundleVersion': '104',
-        'CodexUsageReleaseVersion': '1.0.3.post2',
+        'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0.3', 'CFBundleVersion': '105',
+        'CodexUsageReleaseVersion': '1.0.3.post3',
         'CFBundleIconFile': 'AppIcon', 'LSMinimumSystemVersion': '11.0', 'NSHighResolutionCapable': True,
         'NSPrincipalClass': 'NSApplication', 'NSHumanReadableCopyright': 'Independent local usage tool. Not affiliated with OpenAI.',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},

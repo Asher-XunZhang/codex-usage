@@ -769,7 +769,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         capsuleState.quotaName = snapshot.capsuleWindow.map { "\($0.label)剩余" } ?? "剩余额度"
         capsuleState.quotaStale = snapshot.stale || snapshot.error != nil
         capsuleState.quotaFraction = snapshot.capsuleWindow.map { $0.remaining / 100 }
-        capsuleState.quotaDetail = snapshot.compact
+        capsuleState.quotaRefreshing = quotaReader.isRefreshing
+        capsuleState.quotaFailed = snapshot.error != nil
+        capsuleState.quotaDetail = snapshot.capsuleDetail(refreshing: quotaReader.isRefreshing, enabled: quotaReader.enabled)
+        capsule?.toolTip = snapshot.detail
         budgetCoordinator?.updateQuota(snapshot)
         updateStatusTitle()
         updateRefreshStatus()

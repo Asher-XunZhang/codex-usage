@@ -13,14 +13,14 @@ A native desktop companion for Codex: local token statistics and account quota, 
 | 平台 | 当前发行包 | 打开方式 |
 | --- | --- | --- |
 | Windows x64 | [v1.0.3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip) · [SHA-256](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3/codex-usage-desktop-v1.0.3-windows-x64.zip.sha256) | 完整解压到固定目录，运行 `CodexUsage.exe` |
-| macOS Apple Silicon（M 系列） | [v1.0.3.post2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3.post2/codex-usage-desktop-v1.0.3.post2-AppleSilicon.zip) | 将 `Codex用量.app` 放入应用程序目录 |
-| macOS Intel | [v1.0.3.post2 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3.post2/codex-usage-desktop-v1.0.3.post2-Intel.zip) | 将 `Codex用量.app` 放入应用程序目录 |
+| macOS Apple Silicon（M 系列） | [v1.0.3.post3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3.post3/codex-usage-desktop-v1.0.3.post3-AppleSilicon.zip) | 将 `Codex用量.app` 放入应用程序目录 |
+| macOS Intel | [v1.0.3.post3 ZIP](https://github.com/Asher-XunZhang/codex-usage/releases/download/v1.0.3.post3/codex-usage-desktop-v1.0.3.post3-Intel.zip) | 将 `Codex用量.app` 放入应用程序目录 |
 
-**macOS 最新为 v1.0.3.post2，Windows 仍为 v1.0.3。** macOS 修复认证失效后额度无法同步的问题，增加有界凭据恢复与明确错误提示；两端既有浮窗、预算与任务监控功能保留。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
+**macOS 最新为 v1.0.3.post3，Windows 仍为 v1.0.3。** macOS 修复新版 Codex 程序未被识别导致额度无法刷新，并补全查询状态与错误提示；两端既有浮窗、预算与任务监控功能保留。GitHub 自动生成的 **Source code** 是开发源码，不能直接作为应用打开。
 
 Windows 包自带 .NET 与 Python，无需另装运行环境；请保留完整目录，不要单独移动 EXE。更新前从托盘菜单退出旧版本，再完整解压新包。用户配置与记录保存在 `%LOCALAPPDATA%\CodexUsageDashboard\desktop`，与程序目录分离。构建目标为 Windows 10 2004 及以上 x64，日常验证环境为 Windows 11；未提供 Windows ARM64 原生包。详见 [Windows 使用指南](docs/windows/README.md)。
 
-macOS 安装助手固定安装 v1.0.3.post2，自动选择芯片并校验 ZIP 和签名完整性，不需要 Python、Homebrew 或管理员密码。它会要求确认信任来源；当前 App 使用 ad hoc 签名，未经 Developer ID 签名或 Apple 公证。安装助手、手动安装、Intel 排障及验证边界见 [macOS 安装指南](docs/macos/INSTALL.md)。更新前退出并移走旧 App；保留支持目录和偏好即可继续使用原有数据。
+macOS 安装助手固定安装 v1.0.3.post3，自动选择芯片并校验 ZIP 和签名完整性，不需要 Python、Homebrew 或管理员密码。它会要求确认信任来源；当前 App 使用 ad hoc 签名，未经 Developer ID 签名或 Apple 公证。安装助手、手动安装、Intel 排障及验证边界见 [macOS 安装指南](docs/macos/INSTALL.md)。更新前退出并移走旧 App；保留支持目录和偏好即可继续使用原有数据。
 
 ## 三种查看方式
 

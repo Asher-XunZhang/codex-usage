@@ -31,7 +31,13 @@ struct QuotaSnapshot {
     var detail: String {
         guard !windows.isEmpty else { return error ?? "正在读取账号额度…" }
         let text = windows.map { item in item.compact + (item.resetsAt.map { " · \(smallClock($0, includeDay: true)) 重置" } ?? "") }.joined(separator: "   ")
-        return text + (stale || error != nil ? " · 上次记录" : "")
+        return text + (stale || error != nil ? " · 上次记录" : "") + (error.map { " · " + $0 } ?? "")
+    }
+    func capsuleDetail(refreshing: Bool, enabled: Bool) -> String {
+        if !enabled { return "账号额度查询已关闭" }
+        if refreshing { return "正在刷新账号额度…" }
+        if let error = error { return error }
+        return compact
     }
     var resetLabel: String { resetCount.map { "重置卡 \($0) 张" } ?? "重置卡数量未知" }
     static func parse(_ object: [String: Any]) -> QuotaSnapshot {

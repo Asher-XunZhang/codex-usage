@@ -1,5 +1,18 @@
 import Foundation
 
+enum QuotaExecutable {
+    static func candidates(home: URL) -> [String] {
+        let applications = ["/Applications/ChatGPT.app", "/Applications/Codex.app",
+                            home.appendingPathComponent("Applications/ChatGPT.app").path,
+                            home.appendingPathComponent("Applications/Codex.app").path]
+        return applications.flatMap { app in
+            [app + "/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+             app + "/Contents/Resources/codex"]
+        } + [home.appendingPathComponent(".local/bin/codex").path,
+             "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+    }
+}
+
 /// Serial request state shared by the helper and protocol regression tests.
 /// Only an authorization rejection triggers one managed token refresh.
 final class QuotaRequest {
@@ -78,9 +91,11 @@ final class QuotaRequest {
                 if let resets = window["resetsAt"] as? NSNumber { entry["resets_at"] = resets }
                 windows.append(entry)
             }
+            guard !windows.isEmpty else {
+                end(error: "当前账号未返回订阅额度，请检查 Codex 登录账号"); return
+            }
             var clean: [String: Any] = ["windows": windows, "updated_at": Date().timeIntervalSince1970]
             if let credits = raw["rateLimitResetCredits"] as? [String: Any], let count = credits["availableCount"] as? NSNumber { clean["reset_count"] = count }
-            if windows.isEmpty { clean["error"] = "当前账号未返回订阅额度" }
             end(clean)
         }
     }
@@ -96,10 +111,7 @@ guard let output = argument("--output"), let parentText = argument("--parent-pid
 let destination = URL(fileURLWithPath: output)
 let fm = FileManager.default
 let home = fm.homeDirectoryForCurrentUser
-var locations = ["/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex",
-                 home.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex").path,
-                 home.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex").path,
-                 home.appendingPathComponent(".local/bin/codex").path, "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+let locations = QuotaExecutable.candidates(home: home)
 let executable = locations.first { fm.isExecutableFile(atPath: $0) }
 func publish(_ value: [String: Any]) {
     do {
